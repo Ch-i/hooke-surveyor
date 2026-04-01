@@ -1,0 +1,166 @@
+{
+  "description": "Research topics for the territorial surveyor knowledge base. Each topic has weighted search queries for OpenAlex/Semantic Scholar.",
+  "bioregion": "Dorset maritime (50.79°N, chalk/clay, 1000mm rainfall, USDA 8b)",
+  "topics": [
+    {
+      "id": "syntropic_agriculture",
+      "name": "Syntropic Agriculture",
+      "weight": 1.5,
+      "queries": [
+        "syntropic agriculture agroforestry succession",
+        "Ernst Götsch syntropic farming stratification",
+        "successional agroforestry tropical temperate",
+        "multi-strata agroforestry species interaction"
+      ]
+    },
+    {
+      "id": "miyawaki_method",
+      "name": "Miyawaki Dense Planting",
+      "weight": 1.5,
+      "queries": [
+        "Miyawaki method urban forest restoration",
+        "dense native planting forest restoration survival",
+        "Miyawaki forest growth rate carbon sequestration",
+        "tiny forest biodiversity ecosystem services"
+      ]
+    },
+    {
+      "id": "permaculture_design",
+      "name": "Permaculture & Guild Design",
+      "weight": 1.3,
+      "queries": [
+        "permaculture guild design temperate forest",
+        "companion planting trees species interaction",
+        "food forest design temperate climate",
+        "polyculture agroforestry species complementarity"
+      ]
+    },
+    {
+      "id": "regenerative_agroforestry",
+      "name": "Regenerative Agroforestry",
+      "weight": 1.4,
+      "queries": [
+        "regenerative agroforestry soil health carbon",
+        "silvopasture carbon sequestration temperate",
+        "alley cropping agroforestry UK Europe",
+        "agroforestry ecosystem services biodiversity"
+      ]
+    },
+    {
+      "id": "soil_regeneration",
+      "name": "Soil Regeneration",
+      "weight": 1.3,
+      "queries": [
+        "soil organic carbon woodland restoration",
+        "mycorrhizal network forest soil health",
+        "soil microbiome restoration tree planting",
+        "biochar soil amendment woodland",
+        "nitrogen fixation alder woodland soil improvement"
+      ]
+    },
+    {
+      "id": "habitat_creation",
+      "name": "Habitat Creation & Biodiversity",
+      "weight": 1.2,
+      "queries": [
+        "woodland habitat creation UK biodiversity",
+        "deadwood habitat restoration invertebrate",
+        "riparian woodland buffer zone biodiversity",
+        "ancient woodland indicator species restoration",
+        "bat bird habitat woodland structure"
+      ]
+    },
+    {
+      "id": "carbon_sequestration",
+      "name": "Carbon Stocks & Sequestration",
+      "weight": 1.4,
+      "queries": [
+        "tree carbon sequestration rate UK species",
+        "woodland carbon stock biomass allometry",
+        "soil carbon sequestration afforestation temperate",
+        "carbon accounting woodland creation peatland",
+        "blue carbon wetland riparian woodland"
+      ]
+    },
+    {
+      "id": "species_selection",
+      "name": "Species Selection & Provenance",
+      "weight": 1.2,
+      "queries": [
+        "climate adapted species selection UK forestry",
+        "tree species provenance climate change resilience",
+        "oak beech birch competition interaction UK woodland",
+        "native tree species drought tolerance UK",
+        "assisted migration tree species climate adaptation"
+      ]
+    },
+    {
+      "id": "mycorrhizal_networks",
+      "name": "Mycorrhizal Networks & Symbiosis",
+      "weight": 1.3,
+      "queries": [
+        "common mycorrhizal network forest tree communication",
+        "ectomycorrhiza oak beech pine woodland",
+        "mycorrhizal inoculation tree planting survival",
+        "wood wide web forest nutrient transfer",
+        "arbuscular mycorrhiza agroforestry soil"
+      ]
+    },
+    {
+      "id": "water_management",
+      "name": "Water & Hydrology",
+      "weight": 1.0,
+      "queries": [
+        "natural flood management woodland planting UK",
+        "riparian buffer woodland water quality",
+        "tree water use evapotranspiration UK climate",
+        "wetland woodland hydrological function"
+      ]
+    },
+    {
+      "id": "forest_ecology",
+      "name": "Forest Ecology & Dynamics",
+      "weight": 1.1,
+      "queries": [
+        "temperate forest succession dynamics UK",
+        "gap dynamics woodland regeneration natural",
+        "competition light availability canopy structure",
+        "seed dispersal forest colonization spatial pattern",
+        "forest resilience disturbance recovery"
+      ]
+    },
+    {
+      "id": "timber_silviculture",
+      "name": "Continuous Cover & Timber",
+      "weight": 1.1,
+      "queries": [
+        "continuous cover forestry UK close to nature",
+        "selective thinning timber quality broadleaf",
+        "transformation conifer plantation broadleaf UK",
+        "high value timber silviculture oak sweet chestnut"
+      ]
+    },
+    {
+      "id": "remote_sensing",
+      "name": "Remote Sensing & Monitoring",
+      "weight": 0.8,
+      "queries": [
+        "LiDAR individual tree detection crown segmentation",
+        "NDVI forest health monitoring satellite",
+        "drone multispectral forest assessment",
+        "H3 hexagonal grid spatial analysis ecology"
+      ]
+    },
+    {
+      "id": "bioregional_management",
+      "name": "Bioregional & Landscape Ecology",
+      "weight": 1.0,
+      "queries": [
+        "landscape connectivity habitat corridor design",
+        "bioregional planning ecological network UK",
+        "rewilding temperate forest landscape scale",
+        "ecosystem restoration landscape approach England"
+      ]
+    }
+  ]
+}

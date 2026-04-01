@@ -1,0 +1,103 @@
+{
+  "name": "Dorset Maritime",
+  "location": {
+    "lat": 50.79,
+    "lon": -2.67,
+    "county": "Dorset",
+    "country": "England",
+    "estate": "Hooke Park",
+    "area_ha": 140
+  },
+  "climate": {
+    "zone_usda": "8b",
+    "zone_rhs": "H4",
+    "type": "Oceanic / maritime temperate",
+    "rainfall_mm_yr": 1000,
+    "rainfall_pattern": "Evenly distributed, slight autumn/winter peak",
+    "temp_mean_annual_c": 10.5,
+    "temp_jan_mean_c": 4.5,
+    "temp_jul_mean_c": 16.5,
+    "frost_days_yr": 30,
+    "frost_free_days": 240,
+    "growing_season_days": 210,
+    "sunshine_hours_yr": 1600,
+    "prevailing_wind": "SW",
+    "exposure": "Moderate — sheltered valleys, exposed ridges",
+    "climate_trends": {
+      "warming_c_decade": 0.15,
+      "rainfall_trend": "Increasing winter, decreasing summer",
+      "drought_risk": "Increasing — 2018, 2022 significant dry spells",
+      "storm_frequency": "Increasing"
+    }
+  },
+  "geology_and_soil": {
+    "bedrock": "Upper Greensand / Chalk",
+    "drift": "Clay-with-flints, head deposits",
+    "soil_types": [
+      "Rendzina (thin chalk soils on ridges)",
+      "Brown earth (deeper clay valleys)",
+      "Stagno-gley (waterlogged hollows)"
+    ],
+    "ph_range": "5.5–7.5 (acid clay to alkaline chalk)",
+    "drainage": "Variable — well-drained ridges, impeded valleys",
+    "organic_matter": "Low-moderate (plantation history, limited leaf litter cycling)"
+  },
+  "topography": {
+    "elevation_range_m": [130, 180],
+    "relief": "Rolling hills with steep-sided valleys (combes)",
+    "aspect": "Mixed — N-facing combes, S-facing slopes, ridgelines",
+    "slope_range_deg": [0, 35],
+    "streams": "Several small streams draining to River Hooke"
+  },
+  "ecology": {
+    "nvc_communities": [
+      "W8 Fraxinus excelsior–Acer campestre–Mercurialis woodland",
+      "W10 Quercus robur–Pteridium aquilinum–Rubus woodland",
+      "W16 Quercus spp.–Betula spp.–Deschampsia woodland"
+    ],
+    "ancient_woodland_indicators": [
+      "Bluebell (Hyacinthoides non-scripta)",
+      "Wood anemone (Anemone nemorosa)",
+      "Dog's mercury (Mercurialis perennis)",
+      "Wild garlic (Allium ursinum)",
+      "Yellow archangel (Lamiastrum galeobdolon)"
+    ],
+    "key_species_present": {
+      "canopy": ["Quercus robur", "Fagus sylvatica", "Fraxinus excelsior", "Pinus sylvestris", "Pseudotsuga menziesii"],
+      "understory": ["Corylus avellana", "Ilex aquifolium", "Acer campestre"],
+      "ground": ["Hyacinthoides non-scripta", "Anemone nemorosa", "Rubus fruticosus"]
+    },
+    "protected_species": "Hazel dormouse, multiple bat species, great crested newt (adjacent)",
+    "designation": "None formal — but adjacent to Dorset AONB, Powerstock Common SSSI nearby"
+  },
+  "management_history": {
+    "pre_1950": "Mixed broadleaf woodland, some ancient origins",
+    "1950_1990": "Extensive conifer planting (Scots pine, Douglas fir, larch) for timber",
+    "1990_present": "AA School (Hooke Park campus) — experimental timber, some broadleaf restoration",
+    "current_state": "Mosaic: plantation conifer (thinned), regenerating broadleaf, managed oak, experimental plots",
+    "key_challenge": "Transition from production conifer to resilient mixed woodland under climate change"
+  },
+  "management_objectives": [
+    "Phase conifer out over 100 years (financially constrained)",
+    "Establish resilient mixed broadleaf under climate adaptation",
+    "Maximize carbon sequestration (woodland creation + soil)",
+    "Create habitat connectivity (corridors, riparian buffers, deadwood)",
+    "Maintain timber revenue (high-value hardwood long rotation)",
+    "Support education and research (AA School campus)"
+  ],
+  "constraints": [
+    "Financial: timber revenue must fund transition",
+    "Deer pressure: roe and fallow — browsing limits natural regen",
+    "Ash dieback: Fraxinus excelsior declining across site",
+    "Access: limited machinery access in steep combes",
+    "Campus: active educational use, public access paths"
+  ],
+  "research_priorities": [
+    "Drought-adapted oak/beech provenance for future climate",
+    "Mycorrhizal inoculation to accelerate broadleaf establishment",
+    "Continuous cover silviculture for conifer→broadleaf transition",
+    "Riparian corridor design for water quality + habitat",
+    "Syntropic planting trials in cleared conifer areas",
+    "Soil carbon monitoring under different management regimes"
+  ]
+}

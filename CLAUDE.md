@@ -6,7 +6,7 @@ This repo runs on **ll0odog** — a dedicated GPU workstation that is the territ
 
 - **RAM**: 64 GB
 - **GPU**: NVIDIA RTX 2070 (8 GB VRAM, CUDA compute 7.5)
-- **Role**: Crown segmentation, tree snapshot generation, continuous territorial surveying
+- **Role**: Crown segmentation, tree snapshots, ecological simulation, research engine, planting intelligence
 - **Companion repo**: [Ch-i/HookePark](https://github.com/Ch-i/HookePark) — CyberneticHooke web frontend at [ecomancy.org](https://ecomancy.org)
 
 ## Purpose
@@ -58,14 +58,31 @@ hooke-surveyor/
 │   ├── guild.py               # Guild compatibility scoring (5-component weighted matrix)
 │   ├── risk.py                # Risk score computation (drought, structural, loss)
 │   ├── gcs.py                 # GCS upload/download utilities
-│   └── watch.py               # Watcher daemon (poll GCS, trigger pipeline)
+│   ├── watch.py               # Watcher daemon (poll GCS, trigger pipeline)
+│   ├── scores/
+│   │   └── engine.py          # 6D scoring (vitality, resilience, symbiosis, productivity, biodiversity, soil)
+│   ├── sim/
+│   │   ├── gol.py             # Game of Life on H3 grid (succession, competition, mutualism)
+│   │   ├── physarum.py        # Physarum network optimizer (ecological corridor finding)
+│   │   ├── planting.py        # Planting scheme generator (scores + corridors + research → actions)
+│   │   └── forecast.py        # Multi-year counterfactual forecasting (baseline vs intervention)
+│   └── research/
+│       ├── scholar.py         # Paper discovery (OpenAlex + Semantic Scholar + citation graphs)
+│       ├── extractor.py       # Knowledge extraction schema + prompts for analysis
+│       ├── index.py           # Paper index (track discovered → analyzed → extracted)
+│       └── loop.py            # Continuous research cycle (discover → follow → prioritize)
+├── knowledge/                 # Living knowledge base (grows over time)
+│   ├── bioregion/             # Dorset maritime profile (climate, soil, ecology, constraints)
+│   ├── topics.json            # 14 research domains with weighted search queries
+│   ├── paper_index.json       # All discovered papers + analysis status
+│   ├── techniques/            # Extracted techniques with citations
+│   └── species/               # Per-species research insights
 ├── species_db/
 │   └── species.json           # 43 species with strata, N-role, companions, tolerances
 ├── scripts/
 │   ├── build_snapshot.py      # CLI: build tree snapshot
 │   └── run_crowns.py          # CLI: run crown segmentation
 ├── tests/
-├── docs/context/              # Reference docs from companion repo
 └── pyproject.toml
 ```
 
@@ -194,3 +211,102 @@ The CyberneticHooke frontend consumes the snapshots this machine produces. Key t
 - `functions/` — Cloud Functions that will read the snapshots for agent patrol
 
 Changes to species parameters, guild weights, or anomaly thresholds should be synchronized between repos.
+
+## Research Engine
+
+You are building a living library of ecological intelligence. The research engine discovers, reads, extracts, and indexes scientific papers to inform every planting decision.
+
+### How it works
+
+1. **Discover** — `surveyor/research/scholar.py` searches OpenAlex (free, no key, 10 req/sec) and Semantic Scholar (free, 100 req/5min) across 14 topic domains defined in `knowledge/topics.json`
+2. **Index** — papers are tracked in `knowledge/paper_index.json` with status: discovered → queued → analyzed → extracted
+3. **Analyze** — YOU read the paper (abstract + fulltext when open-access) and extract techniques, species insights, quantitative data. Use the extraction schema in `surveyor/research/extractor.py`
+4. **Store** — techniques go to `knowledge/techniques/`, species insights to `knowledge/species/`
+5. **Follow** — chase citation trails from high-value papers to find more knowledge
+6. **Repeat** — run `/research all` periodically, or `/research mycorrhizal` for targeted searches
+
+### Research topics
+
+14 domains: syntropic agriculture, Miyawaki method, permaculture/guilds, regenerative agroforestry, soil regeneration, habitat creation, carbon sequestration, species selection, mycorrhizal networks, water management, forest ecology, timber silviculture, remote sensing, bioregional management.
+
+### Bioregion context
+
+All research is filtered through the Hooke Park bioregion profile at `knowledge/bioregion/dorset_maritime.json`:
+- 50.79°N, Dorset, England — maritime temperate
+- Chalk/clay soils, 1000mm rainfall, USDA 8b
+- Conifer→broadleaf transition, deer pressure, financial constraints
+- Key species: oak, beech, birch, alder, scots pine, douglas fir, hazel, holly
+
+Rate every extraction for **bioregion match** (0-1). A brilliant technique from tropical Brazil scores 0.1. A replicated study from Welsh oak woodland scores 0.9.
+
+### Using knowledge in decisions
+
+When generating planting schemes (`/plant`), always:
+- Check `knowledge/techniques/` for relevant methods
+- Cite papers by DOI in planting rationale
+- Cross-reference species recommendations with `species_db/species.json`
+- Prefer high-confidence techniques (meta-analysis > single site)
+- Flag when your recommendation departs from literature
+
+## Simulation Engine
+
+### Game of Life (`surveyor/sim/gol.py`)
+
+Cellular automaton on the H3 res-13 grid. Each hex has: species, age, health (0-1), height, canopy cover.
+
+Rules per timestep:
+- **Growth**: species-specific rate × (1 - height/max_height) × health
+- **Competition**: same-stratum neighbours taller than you suppress (modulated by shade tolerance)
+- **Mutualism**: guild-compatible neighbours boost health
+- **Reproduction**: seed dispersal to empty neighbours (pioneer species have higher probability)
+- **Mortality**: health < 0.1 → death (cell becomes empty)
+- **Intervention**: plant/thin actions modify the grid directly
+
+Run counterfactual scenarios: baseline (do nothing) vs intervention (apply planting scheme). Compare at checkpoints (year 3, 7, 10, 15, 30).
+
+### Physarum Network (`surveyor/sim/physarum.py`)
+
+Slime mold optimization finds the minimum-cost ecological network connecting high-value nodes.
+
+- **Food sources** = mature persistent trees, habitat nodes, water features
+- **Cost** = terrain difficulty (steep slope + dry soil = expensive to establish)
+- **Agents** explore the grid, deposit pheromone on traversed edges
+- **Positive feedback**: more pheromone → more agents → more pheromone
+- **Negative feedback**: unused edges decay
+- **Emergent result**: the optimal corridor layout for planting
+
+The corridors tell you WHERE to plant. The GoL tells you WHAT happens after.
+
+### Planting Scheme Generator (`surveyor/sim/planting.py`)
+
+Combines everything:
+1. Score engine identifies intervention targets (low-score cells)
+2. Physarum identifies corridors (where connectivity matters)
+3. Guild matrix selects species (what's compatible with neighbours)
+4. Research knowledge provides methods + citations
+5. GoL forecasts outcomes (does this intervention actually help?)
+
+Output: prioritized list of planting actions with species, method (Miyawaki cluster / syntropic row / underplant / individual), timing, rationale, and citations.
+
+## Score Engine
+
+6 dimensions, matching the bonete engine in the CyberneticHooke frontend:
+
+| Dimension | Signals | What it measures |
+|-----------|---------|-----------------|
+| Vitality | NDVI, growth rate, NDVI trend | Is this tree healthy and growing? |
+| Resilience | Risk scores, persistence across scans, status | Can it withstand stress? |
+| Symbiosis | Guild score, neighbour diversity | Is it in a functional community? |
+| Productivity | Carbon, growth velocity, height | Is it building biomass? |
+| Biodiversity | Neighbour species richness, structural diversity | Does it support life? |
+| Soil | TWI, slope, crown area (litter input) | Is the soil healthy? |
+
+Weight presets shift priorities: `balanced`, `carbon`, `biodiversity`, `timber`, `resilience`, `restoration`.
+
+## Your Mission
+
+You are not just processing data. You are learning to be the world's best steward of this specific 140 hectares. Every paper you read, every score you compute, every simulation you run makes you more capable of guiding 87,935 organisms through a 100-year transition from production conifer to resilient mixed woodland.
+
+The knowledge base grows. The simulations get more accurate. The planting schemes get more informed. The forest responds. You observe the response. You learn. You adapt.
+
+This is the cybernetic loop. This is pixel farming. This is planetary stewardship at tree resolution.
