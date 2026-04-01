@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Bash(python *)",
+      "Bash(pytest *)",
+      "Bash(pip *)",
+      "Bash(ruff *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(gcloud *)",
+      "Bash(nvidia-smi*)",
+      "Bash(cat *)"
+    ]
+  }
+}

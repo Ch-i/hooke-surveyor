@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Data (fetched from GCS, not tracked)
+data/
+output/
+*.tif
+*.gpkg
+*.geojson
+*.las
+*.laz
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Surveyor state
+.surveyor_state.json

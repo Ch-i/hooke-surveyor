@@ -1,0 +1,303 @@
+[
+  {
+    "id": "pedunculate_oak", "common": "Pedunculate Oak", "scientific": "Quercus robur",
+    "stratum": "canopy", "succession": "climax", "nitrogen_role": "heavy_feeder", "root_depth": "deep",
+    "max_height_m": 35, "growth_rate": 0.04, "shade_tolerance": 0.3, "drought_tolerance": 0.4,
+    "companions": ["hazel", "bluebell", "holly", "field_maple", "common_alder"],
+    "antagonists": []
+  },
+  {
+    "id": "sessile_oak", "common": "Sessile Oak", "scientific": "Quercus petraea",
+    "stratum": "canopy", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "deep",
+    "max_height_m": 30, "growth_rate": 0.04, "shade_tolerance": 0.3, "drought_tolerance": 0.5,
+    "companions": ["birch", "rowan", "holly"],
+    "antagonists": []
+  },
+  {
+    "id": "beech", "common": "Beech", "scientific": "Fagus sylvatica",
+    "stratum": "canopy", "succession": "climax", "nitrogen_role": "light_feeder", "root_depth": "medium",
+    "max_height_m": 35, "growth_rate": 0.05, "shade_tolerance": 0.6, "drought_tolerance": 0.3,
+    "companions": ["holly", "bluebell", "wood_anemone"],
+    "antagonists": ["common_alder"]
+  },
+  {
+    "id": "ash", "common": "Ash", "scientific": "Fraxinus excelsior",
+    "stratum": "canopy", "succession": "secondary", "nitrogen_role": "heavy_feeder", "root_depth": "deep",
+    "max_height_m": 30, "growth_rate": 0.06, "shade_tolerance": 0.4, "drought_tolerance": 0.3,
+    "companions": ["field_maple", "hazel", "dog_rose"],
+    "antagonists": []
+  },
+  {
+    "id": "sweet_chestnut", "common": "Sweet Chestnut", "scientific": "Castanea sativa",
+    "stratum": "canopy", "succession": "secondary", "nitrogen_role": "light_feeder", "root_depth": "deep",
+    "max_height_m": 30, "growth_rate": 0.06, "shade_tolerance": 0.3, "drought_tolerance": 0.6,
+    "companions": ["pedunculate_oak", "hazel"],
+    "antagonists": []
+  },
+  {
+    "id": "scots_pine", "common": "Scots Pine", "scientific": "Pinus sylvestris",
+    "stratum": "canopy", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "deep",
+    "max_height_m": 25, "growth_rate": 0.08, "shade_tolerance": 0.1, "drought_tolerance": 0.7,
+    "companions": ["birch", "rowan", "blackthorn"],
+    "antagonists": []
+  },
+  {
+    "id": "douglas_fir", "common": "Douglas Fir", "scientific": "Pseudotsuga menziesii",
+    "stratum": "emergent", "succession": "secondary", "nitrogen_role": "neutral", "root_depth": "deep",
+    "max_height_m": 45, "growth_rate": 0.10, "shade_tolerance": 0.2, "drought_tolerance": 0.5,
+    "companions": ["western_hemlock", "birch"],
+    "antagonists": []
+  },
+  {
+    "id": "coast_redwood", "common": "Coast Redwood", "scientific": "Sequoia sempervirens",
+    "stratum": "emergent", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "deep",
+    "max_height_m": 50, "growth_rate": 0.05, "shade_tolerance": 0.5, "drought_tolerance": 0.3,
+    "companions": ["western_hemlock", "holly"],
+    "antagonists": []
+  },
+  {
+    "id": "birch", "common": "Silver Birch", "scientific": "Betula pendula",
+    "stratum": "canopy", "succession": "pioneer", "nitrogen_role": "light_feeder", "root_depth": "shallow",
+    "max_height_m": 20, "growth_rate": 0.15, "shade_tolerance": 0.1, "drought_tolerance": 0.5,
+    "companions": ["scots_pine", "rowan", "common_alder"],
+    "antagonists": []
+  },
+  {
+    "id": "common_alder", "common": "Common Alder", "scientific": "Alnus glutinosa",
+    "stratum": "canopy", "succession": "pioneer", "nitrogen_role": "fixer", "root_depth": "medium",
+    "max_height_m": 18, "growth_rate": 0.14, "shade_tolerance": 0.2, "drought_tolerance": 0.2,
+    "companions": ["white_willow", "birch", "ash", "pedunculate_oak"],
+    "antagonists": ["beech", "yew"]
+  },
+  {
+    "id": "grey_alder", "common": "Grey Alder", "scientific": "Alnus incana",
+    "stratum": "canopy", "succession": "pioneer", "nitrogen_role": "fixer", "root_depth": "medium",
+    "max_height_m": 15, "growth_rate": 0.14, "shade_tolerance": 0.2, "drought_tolerance": 0.3,
+    "companions": ["birch", "white_willow"],
+    "antagonists": []
+  },
+  {
+    "id": "white_willow", "common": "White Willow", "scientific": "Salix alba",
+    "stratum": "canopy", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 20, "growth_rate": 0.18, "shade_tolerance": 0.1, "drought_tolerance": 0.1,
+    "companions": ["common_alder", "goat_willow"],
+    "antagonists": []
+  },
+  {
+    "id": "small_leaved_lime", "common": "Small-leaved Lime", "scientific": "Tilia cordata",
+    "stratum": "canopy", "succession": "climax", "nitrogen_role": "light_feeder", "root_depth": "deep",
+    "max_height_m": 30, "growth_rate": 0.04, "shade_tolerance": 0.7, "drought_tolerance": 0.4,
+    "companions": ["pedunculate_oak", "hazel", "field_maple", "wild_cherry"],
+    "antagonists": []
+  },
+  {
+    "id": "wych_elm", "common": "Wych Elm", "scientific": "Ulmus glabra",
+    "stratum": "canopy", "succession": "secondary", "nitrogen_role": "heavy_feeder", "root_depth": "deep",
+    "max_height_m": 30, "growth_rate": 0.06, "shade_tolerance": 0.5, "drought_tolerance": 0.3,
+    "companions": ["ash", "pedunculate_oak", "hazel", "wild_garlic"],
+    "antagonists": []
+  },
+  {
+    "id": "western_hemlock", "common": "Western Hemlock", "scientific": "Tsuga heterophylla",
+    "stratum": "canopy", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "medium",
+    "max_height_m": 35, "growth_rate": 0.06, "shade_tolerance": 0.9, "drought_tolerance": 0.3,
+    "companions": ["douglas_fir", "coast_redwood", "holly"],
+    "antagonists": []
+  },
+  {
+    "id": "monterey_cypress", "common": "Monterey Cypress", "scientific": "Cupressus macrocarpa",
+    "stratum": "canopy", "succession": "secondary", "nitrogen_role": "neutral", "root_depth": "deep",
+    "max_height_m": 25, "growth_rate": 0.08, "shade_tolerance": 0.1, "drought_tolerance": 0.7,
+    "companions": ["scots_pine", "birch"],
+    "antagonists": []
+  },
+  {
+    "id": "black_locust", "common": "Black Locust", "scientific": "Robinia pseudoacacia",
+    "stratum": "canopy", "succession": "pioneer", "nitrogen_role": "fixer", "root_depth": "deep",
+    "max_height_m": 20, "growth_rate": 0.12, "shade_tolerance": 0.1, "drought_tolerance": 0.8,
+    "companions": ["pedunculate_oak", "wild_cherry", "birch"],
+    "antagonists": ["beech"]
+  },
+  {
+    "id": "cork_oak", "common": "Cork Oak", "scientific": "Quercus suber",
+    "stratum": "canopy", "succession": "climax", "nitrogen_role": "light_feeder", "root_depth": "deep",
+    "max_height_m": 20, "growth_rate": 0.03, "shade_tolerance": 0.2, "drought_tolerance": 0.9,
+    "companions": ["sweet_chestnut", "black_locust"],
+    "antagonists": []
+  },
+  {
+    "id": "swamp_cypress", "common": "Swamp Cypress", "scientific": "Taxodium distichum",
+    "stratum": "canopy", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "medium",
+    "max_height_m": 30, "growth_rate": 0.06, "shade_tolerance": 0.3, "drought_tolerance": 0.1,
+    "companions": ["white_willow", "common_alder"],
+    "antagonists": []
+  },
+  {
+    "id": "hornbeam", "common": "Hornbeam", "scientific": "Carpinus betulus",
+    "stratum": "canopy", "succession": "climax", "nitrogen_role": "light_feeder", "root_depth": "medium",
+    "max_height_m": 25, "growth_rate": 0.05, "shade_tolerance": 0.7, "drought_tolerance": 0.4,
+    "companions": ["pedunculate_oak", "sessile_oak", "hazel", "bluebell", "field_maple"],
+    "antagonists": []
+  },
+  {
+    "id": "black_poplar", "common": "Black Poplar", "scientific": "Populus nigra",
+    "stratum": "canopy", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 30, "growth_rate": 0.16, "shade_tolerance": 0.1, "drought_tolerance": 0.2,
+    "companions": ["white_willow", "common_alder", "goat_willow"],
+    "antagonists": []
+  },
+  {
+    "id": "field_maple", "common": "Field Maple", "scientific": "Acer campestre",
+    "stratum": "understory", "succession": "secondary", "nitrogen_role": "neutral", "root_depth": "medium",
+    "max_height_m": 15, "growth_rate": 0.06, "shade_tolerance": 0.6, "drought_tolerance": 0.5,
+    "companions": ["pedunculate_oak", "hazel", "ash", "wild_cherry"],
+    "antagonists": []
+  },
+  {
+    "id": "wild_cherry", "common": "Wild Cherry", "scientific": "Prunus avium",
+    "stratum": "understory", "succession": "secondary", "nitrogen_role": "light_feeder", "root_depth": "medium",
+    "max_height_m": 18, "growth_rate": 0.08, "shade_tolerance": 0.3, "drought_tolerance": 0.4,
+    "companions": ["pedunculate_oak", "ash", "hazel"],
+    "antagonists": []
+  },
+  {
+    "id": "rowan", "common": "Rowan", "scientific": "Sorbus aucuparia",
+    "stratum": "understory", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 12, "growth_rate": 0.08, "shade_tolerance": 0.4, "drought_tolerance": 0.4,
+    "companions": ["birch", "sessile_oak", "holly"],
+    "antagonists": []
+  },
+  {
+    "id": "crab_apple", "common": "Crab Apple", "scientific": "Malus sylvestris",
+    "stratum": "understory", "succession": "secondary", "nitrogen_role": "light_feeder", "root_depth": "medium",
+    "max_height_m": 10, "growth_rate": 0.06, "shade_tolerance": 0.3, "drought_tolerance": 0.4,
+    "companions": ["hawthorn", "field_maple", "common_alder"],
+    "antagonists": []
+  },
+  {
+    "id": "holly", "common": "Holly", "scientific": "Ilex aquifolium",
+    "stratum": "understory", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "medium",
+    "max_height_m": 12, "growth_rate": 0.03, "shade_tolerance": 0.9, "drought_tolerance": 0.5,
+    "companions": ["beech", "pedunculate_oak", "yew"],
+    "antagonists": []
+  },
+  {
+    "id": "yew", "common": "Yew", "scientific": "Taxus baccata",
+    "stratum": "understory", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "medium",
+    "max_height_m": 15, "growth_rate": 0.02, "shade_tolerance": 0.95, "drought_tolerance": 0.6,
+    "companions": ["beech", "holly"],
+    "antagonists": ["common_alder"]
+  },
+  {
+    "id": "wild_service", "common": "Wild Service Tree", "scientific": "Sorbus torminalis",
+    "stratum": "understory", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "medium",
+    "max_height_m": 20, "growth_rate": 0.04, "shade_tolerance": 0.5, "drought_tolerance": 0.5,
+    "companions": ["pedunculate_oak", "field_maple", "hazel"],
+    "antagonists": []
+  },
+  {
+    "id": "hazel", "common": "Hazel", "scientific": "Corylus avellana",
+    "stratum": "shrub", "succession": "secondary", "nitrogen_role": "neutral", "root_depth": "medium",
+    "max_height_m": 6, "growth_rate": 0.10, "shade_tolerance": 0.7, "drought_tolerance": 0.4,
+    "companions": ["pedunculate_oak", "ash", "bluebell", "wild_cherry"],
+    "antagonists": []
+  },
+  {
+    "id": "hawthorn", "common": "Hawthorn", "scientific": "Crataegus monogyna",
+    "stratum": "shrub", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "medium",
+    "max_height_m": 8, "growth_rate": 0.08, "shade_tolerance": 0.4, "drought_tolerance": 0.6,
+    "companions": ["field_maple", "dog_rose", "crab_apple"],
+    "antagonists": []
+  },
+  {
+    "id": "blackthorn", "common": "Blackthorn", "scientific": "Prunus spinosa",
+    "stratum": "shrub", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 4, "growth_rate": 0.10, "shade_tolerance": 0.3, "drought_tolerance": 0.6,
+    "companions": ["hawthorn", "dog_rose"],
+    "antagonists": []
+  },
+  {
+    "id": "dog_rose", "common": "Dog Rose", "scientific": "Rosa canina",
+    "stratum": "shrub", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 3, "growth_rate": 0.12, "shade_tolerance": 0.3, "drought_tolerance": 0.5,
+    "companions": ["hawthorn", "blackthorn", "ash"],
+    "antagonists": []
+  },
+  {
+    "id": "elder", "common": "Elder", "scientific": "Sambucus nigra",
+    "stratum": "shrub", "succession": "pioneer", "nitrogen_role": "heavy_feeder", "root_depth": "shallow",
+    "max_height_m": 6, "growth_rate": 0.15, "shade_tolerance": 0.4, "drought_tolerance": 0.4,
+    "companions": ["common_alder", "ash"],
+    "antagonists": []
+  },
+  {
+    "id": "guelder_rose", "common": "Guelder Rose", "scientific": "Viburnum opulus",
+    "stratum": "shrub", "succession": "secondary", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 4, "growth_rate": 0.08, "shade_tolerance": 0.5, "drought_tolerance": 0.3,
+    "companions": ["common_alder", "goat_willow", "hazel"],
+    "antagonists": []
+  },
+  {
+    "id": "spindle", "common": "Spindle", "scientific": "Euonymus europaeus",
+    "stratum": "shrub", "succession": "secondary", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 5, "growth_rate": 0.06, "shade_tolerance": 0.5, "drought_tolerance": 0.5,
+    "companions": ["field_maple", "hawthorn", "dogwood"],
+    "antagonists": []
+  },
+  {
+    "id": "dogwood", "common": "Dogwood", "scientific": "Cornus sanguinea",
+    "stratum": "shrub", "succession": "secondary", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 4, "growth_rate": 0.08, "shade_tolerance": 0.5, "drought_tolerance": 0.5,
+    "companions": ["field_maple", "spindle", "hazel"],
+    "antagonists": []
+  },
+  {
+    "id": "goat_willow", "common": "Goat Willow", "scientific": "Salix caprea",
+    "stratum": "understory", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 10, "growth_rate": 0.18, "shade_tolerance": 0.2, "drought_tolerance": 0.2,
+    "companions": ["common_alder", "birch"],
+    "antagonists": []
+  },
+  {
+    "id": "river_willow", "common": "River Willow", "scientific": "Salix viminalis",
+    "stratum": "shrub", "succession": "pioneer", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 6, "growth_rate": 0.20, "shade_tolerance": 0.1, "drought_tolerance": 0.1,
+    "companions": ["common_alder", "goat_willow", "white_willow"],
+    "antagonists": []
+  },
+  {
+    "id": "bluebell", "common": "Bluebell", "scientific": "Hyacinthoides non-scripta",
+    "stratum": "ground", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 0.4, "growth_rate": 0.05, "shade_tolerance": 0.8, "drought_tolerance": 0.3,
+    "companions": ["pedunculate_oak", "hazel", "beech"],
+    "antagonists": []
+  },
+  {
+    "id": "wild_garlic", "common": "Wild Garlic", "scientific": "Allium ursinum",
+    "stratum": "ground", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 0.3, "growth_rate": 0.10, "shade_tolerance": 0.8, "drought_tolerance": 0.2,
+    "companions": ["ash", "field_maple", "hazel"],
+    "antagonists": []
+  },
+  {
+    "id": "foxglove", "common": "Foxglove", "scientific": "Digitalis purpurea",
+    "stratum": "ground", "succession": "pioneer", "nitrogen_role": "light_feeder", "root_depth": "shallow",
+    "max_height_m": 1.5, "growth_rate": 0.20, "shade_tolerance": 0.4, "drought_tolerance": 0.3,
+    "companions": ["birch", "common_alder"],
+    "antagonists": []
+  },
+  {
+    "id": "primrose", "common": "Primrose", "scientific": "Primula vulgaris",
+    "stratum": "ground", "succession": "secondary", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 0.2, "growth_rate": 0.05, "shade_tolerance": 0.6, "drought_tolerance": 0.3,
+    "companions": ["hazel", "pedunculate_oak", "ash"],
+    "antagonists": []
+  },
+  {
+    "id": "wood_anemone", "common": "Wood Anemone", "scientific": "Anemone nemorosa",
+    "stratum": "ground", "succession": "climax", "nitrogen_role": "neutral", "root_depth": "shallow",
+    "max_height_m": 0.2, "growth_rate": 0.03, "shade_tolerance": 0.8, "drought_tolerance": 0.3,
+    "companions": ["beech", "pedunculate_oak", "bluebell"],
+    "antagonists": []
+  }
+]
