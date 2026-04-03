@@ -577,6 +577,14 @@ async def start_perpetual():
             result = _perpetual_step()
             if result and _ws_clients:
                 await _broadcast(result)
+            # Auto-save checkpoint every 10 sim years
+            if _perpetual_year > 0 and _perpetual_season == 0 and _perpetual_year % 10 == 0:
+                cp_dir = DATA_DIR / "checkpoints"
+                cp_dir.mkdir(parents=True, exist_ok=True)
+                cp_path = cp_dir / f"year_{_perpetual_year:03d}.json"
+                if not cp_path.exists() and _perpetual_gol:
+                    _save_checkpoint(_perpetual_gol.grid, _perpetual_species_db, _perpetual_year, cp_dir)
+                    logger.info(f"Perpetual checkpoint saved: year {_perpetual_year}")
             await asyncio.sleep(2)  # 2s per season = ~8s per year
         logger.info("Perpetual mode stopped")
 
