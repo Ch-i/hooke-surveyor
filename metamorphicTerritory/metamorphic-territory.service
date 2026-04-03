@@ -1,0 +1,18 @@
+[Unit]
+Description=metamorphicTerritory — planting scheme tile server
+After=network.target
+
+[Service]
+Type=simple
+User=aiapaec
+WorkingDirectory=/home/aiapaec/metamorphicTerritory
+ExecStart=/home/aiapaec/.local/bin/uv run metamorphic-serve
+Restart=on-failure
+RestartSec=5
+Environment=DATA_DIR=/home/aiapaec/metamorphicTerritory/output
+Environment=SURVEYOR_OUTPUT=/home/aiapaec/metamorphicTerritory/output
+Environment=SPECIES_DB=/home/aiapaec/metamorphicTerritory/species_db/species.json
+Environment=PORT=8420
+
+[Install]
+WantedBy=multi-user.target

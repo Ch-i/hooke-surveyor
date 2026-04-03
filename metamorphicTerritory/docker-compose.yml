@@ -1,0 +1,26 @@
+services:
+  metamorphic:
+    build:
+      context: ..
+      dockerfile: metamorphicTerritory/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../output:/data/output:ro
+      - tiles-data:/data
+    environment:
+      - DATA_DIR=/data
+      - SURVEYOR_OUTPUT=/data/output
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    depends_on:
+      - metamorphic
+    restart: unless-stopped
+
+volumes:
+  tiles-data:
