@@ -18,6 +18,8 @@ from typing import Optional
 import h3
 import numpy as np
 
+from surveyor.sim.classify import BlockClassification
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +34,7 @@ class PlantingAction:
     rationale: str
     cluster_id: Optional[str] = None
     window: str = ""  # e.g. "October-December 2026"
+    management_class: str = ""
     companions: list[str] = field(default_factory=list)
     citations: list[str] = field(default_factory=list)  # DOIs
 
@@ -50,6 +53,59 @@ class PlantingScheme:
     forecast_biodiversity_gain: float = 0.0
 
 
+# Per-class planting phase windows (from STRATEGY.md)
+PHASE_SCHEDULE = {
+    "C": (0, 1),   # Open ground: immediate
+    "E": (0, 1),   # Riparian: immediate
+    "G": (0, 1),   # Hedgerows: immediate
+    "A": (3, 15),  # Monoculture: thin yr 1-3, plant yr 3+
+    "D": (3, 15),  # Transition: thin yr 1-3, plant yr 3+
+    "F": (3, 7),   # Ridgeline: secondary priority
+    "B": (7, 20),  # Semi-natural: enrichment only, late
+}
+
+CLASS_SPECIES_PALETTES = {
+    "A": {  # CCF transition: thin conifer, underplant broadleaf
+        "pioneer": ["birch", "common_alder", "grey_alder"],
+        "secondary": ["pedunculate_oak", "sweet_chestnut", "wild_cherry", "field_maple"],
+        "climax": ["holly", "yew", "beech"],
+        "shrub": ["hazel"],
+    },
+    "B": {  # Conserve + enrich understory
+        "pioneer": [],  # no pioneers in established broadleaf
+        "secondary": ["field_maple", "wild_cherry", "crab_apple"],
+        "climax": ["holly", "yew", "wild_service", "small_leaved_lime"],
+        "shrub": ["hazel", "spindle", "guelder_rose"],
+        "ground": ["bluebell", "wood_anemone", "wild_garlic", "primrose"],
+    },
+    "C": {  # Syntropic Miyawaki: dense mixed pioneer
+        "pioneer": ["birch", "common_alder", "grey_alder", "scots_pine", "goat_willow"],
+        "secondary": ["pedunculate_oak", "sweet_chestnut", "wild_cherry", "douglas_fir"],
+        "shrub": ["hawthorn", "blackthorn", "hazel", "elder"],
+    },
+    "D": {  # Alley cropping between retained conifers
+        "pioneer": ["birch", "common_alder"],
+        "secondary": ["pedunculate_oak", "sweet_chestnut", "field_maple"],
+        "shrub": ["hazel", "hawthorn"],
+    },
+    "E": {  # Riparian N-fixer buffers
+        "pioneer": ["common_alder", "grey_alder", "goat_willow", "white_willow"],
+        "secondary": ["swamp_cypress"],
+        "shrub": ["river_willow", "guelder_rose"],
+    },
+    "F": {  # Ridgeline drought resilience
+        "pioneer": ["scots_pine", "birch", "monterey_cypress"],
+        "secondary": ["sessile_oak", "sweet_chestnut", "cork_oak"],
+        "shrub": ["hawthorn", "blackthorn"],
+    },
+    "G": {  # Dense hedgerows
+        "pioneer": ["hawthorn", "blackthorn"],
+        "secondary": ["field_maple", "wild_cherry"],
+        "shrub": ["hazel", "dog_rose", "spindle", "guelder_rose", "dogwood", "elder"],
+    },
+}
+
+
 def generate_planting_scheme(
     snapshot_records: list[dict],
     scores: dict[str, dict],
@@ -58,6 +114,7 @@ def generate_planting_scheme(
     guild_scorer,
     target_area: Optional[list[str]] = None,
     knowledge_dir: Optional[str] = None,
+    classifications: dict[str, BlockClassification] = None,
 ) -> PlantingScheme:
     """Generate a planting scheme for a target area.
 
@@ -69,6 +126,7 @@ def generate_planting_scheme(
         guild_scorer: compatibility function
         target_area: restrict to these H3 IDs (or None for full site)
         knowledge_dir: path to knowledge base for technique citations
+        classifications: {h3_res11: BlockClassification} management class map
     """
     # Index records by h3
     by_h3 = {rec.get("h3_13") or rec.get("h3"): rec for rec in snapshot_records}
@@ -100,7 +158,15 @@ def generate_planting_scheme(
     # Select species for each cell
     actions = []
     for h, rec, need, corridor in intervention_cells:
-        species = _select_species(h, rec, candidates, species_db, guild_scorer, corridor)
+        # Look up management class for this hex
+        mgmt_class = None
+        if classifications:
+            parent_11 = h3.cell_to_parent(h, 11)
+            block_cls = classifications.get(parent_11)
+            if block_cls:
+                mgmt_class = block_cls.management_class
+
+        species = _select_species(h, rec, candidates, species_db, guild_scorer, corridor, management_class=mgmt_class)
         method = _select_method(rec, corridor, species)
 
         actions.append(PlantingAction(
@@ -110,6 +176,7 @@ def generate_planting_scheme(
             priority=min(10, max(1, int(need * 10))),
             rationale=_generate_rationale(rec, species, method, species_db),
             window=_planting_window(species, species_db),
+            management_class=mgmt_class or "",
         ))
 
     # Group into clusters
@@ -139,8 +206,12 @@ def generate_planting_scheme(
 def _select_species(
     h3_id: str, rec: dict, all_records: dict,
     species_db: dict, guild_scorer, corridor_strength: float,
+    management_class: str = None,
 ) -> str:
     """Select species using terrain, climate, succession, and timber objectives.
+
+    When management_class is provided, candidates are filtered to only
+    species present in that class's CLASS_SPECIES_PALETTES entry.
 
     Site data used (from LiDAR + COGs):
       slope_deg   — steep slopes get stabilization species
@@ -203,6 +274,15 @@ def _select_species(
     # ── Score each candidate species ──
     scores = {}
     for sp_id, sp in species_db.items():
+        # Filter to class palette if management class is specified
+        if management_class and management_class in CLASS_SPECIES_PALETTES:
+            palette = CLASS_SPECIES_PALETTES[management_class]
+            allowed = set()
+            for spp_list in palette.values():
+                allowed.update(spp_list)
+            if sp_id not in allowed:
+                continue
+
         stratum = sp.get("stratum", "canopy")
         if stratum == "ground" and not under_mature:
             continue  # ground layer only under established canopy

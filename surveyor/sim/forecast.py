@@ -24,8 +24,119 @@ from .fgr import (
     export_checkpoint, write_fgr, classify_hex_action,
     DEFAULT_CHECKPOINTS,
 )
+from surveyor.sim.planting import PHASE_SCHEDULE, CLASS_SPECIES_PALETTES
 
 logger = logging.getLogger(__name__)
+
+
+# ── Succession-stage offsets (years after phase_start) ───────────────────────
+_SUCCESSION_OFFSET = {
+    "pioneer":   0,
+    "secondary": 3,
+    "climax":    7,
+    "shrub":     1,   # shrubs go in with pioneers
+    "ground":    5,   # ground flora after canopy begins to close
+}
+
+# Classes that require thinning before planting
+_THIN_FIRST_CLASSES = {"A", "D"}
+_THIN_LEAD_YEARS = 2  # thinning precedes planting by this many years
+
+
+def scheme_to_phased_moves(
+    scheme,  # PlantingScheme
+    species_db: dict,
+    classifications: dict = None,  # {h3_11: BlockClassification}
+) -> list:
+    """Convert planting actions to temporally-phased moves.
+
+    Timing is driven by two axes:
+      1. Management class → PHASE_SCHEDULE base window (from planting.py)
+      2. Species succession stage → offset within that window
+
+    For class A/D (conifer monoculture / transition zones), thinning moves
+    are inserted *before* planting moves by ``_THIN_LEAD_YEARS``.
+
+    Returns list of dicts: [{h3, year, action, species, management_class}, ...]
+    Sorted by year.
+    """
+    moves = []
+
+    for action in scheme.actions:
+        mgmt_class = action.management_class or ""
+        h3_id = action.h3_id
+
+        # ── Determine base year from PHASE_SCHEDULE ──────────────────
+        if mgmt_class and mgmt_class in PHASE_SCHEDULE:
+            phase_start, phase_end = PHASE_SCHEDULE[mgmt_class]
+        else:
+            # Fallback: treat as generic mid-priority
+            phase_start, phase_end = (3, 15)
+
+        # ── Look up succession stage ─────────────────────────────────
+        sp_data = species_db.get(action.species, {})
+        succession = sp_data.get("succession", "secondary")
+
+        # Check CLASS_SPECIES_PALETTES for an authoritative stage lookup
+        # (the palette keys *are* the succession categories)
+        if mgmt_class and mgmt_class in CLASS_SPECIES_PALETTES:
+            palette = CLASS_SPECIES_PALETTES[mgmt_class]
+            for stage, spp_list in palette.items():
+                if action.species in spp_list:
+                    succession = stage
+                    break
+
+        offset = _SUCCESSION_OFFSET.get(succession, 3)
+        plant_year = phase_start + offset
+
+        # Clamp within the phase window (with a little slack for climax)
+        plant_year = max(phase_start, min(plant_year, phase_end + 2))
+
+        # Spread plants within the same year bucket using a stable hash
+        # so that not all 15K moves land on a single year
+        spread = abs(hash(h3_id)) % 3  # 0, 1, or 2 year jitter
+        plant_year += spread
+        plant_year = max(phase_start, min(plant_year, phase_end + 4))
+
+        # ── Thinning move for class A / D ────────────────────────────
+        if mgmt_class in _THIN_FIRST_CLASSES:
+            thin_year = max(1, plant_year - _THIN_LEAD_YEARS)
+            moves.append({
+                "h3": h3_id,
+                "year": thin_year,
+                "action": "thin",
+                "species": None,
+                "species_removed": None,  # filled later from snapshot
+                "management_class": mgmt_class,
+                "method": None,
+                "priority": action.priority,
+                "rationale": (
+                    f"Class {mgmt_class}: thin competing conifer "
+                    f"to prepare for {sp_data.get('common', action.species)} "
+                    f"planting in year {plant_year}"
+                ),
+                "cluster_id": action.cluster_id,
+                "citations": action.citations,
+            })
+
+        # ── Planting move ────────────────────────────────────────────
+        moves.append({
+            "h3": h3_id,
+            "year": plant_year,
+            "action": "plant",
+            "species": action.species,
+            "species_removed": None,
+            "management_class": mgmt_class,
+            "method": action.method,
+            "priority": action.priority,
+            "rationale": action.rationale,
+            "cluster_id": action.cluster_id,
+            "citations": action.citations,
+        })
+
+    # Sort: year ascending, then priority descending
+    moves.sort(key=lambda m: (m["year"], -(m["priority"] or 5)))
+    return moves
 
 
 def generate_100yr_plan(
@@ -177,64 +288,36 @@ def generate_100yr_plan(
 
 
 def _scheme_to_moves(scheme, classifications: dict, species_db: dict, scores: dict) -> list[Move]:
-    """Convert a planting scheme + classifications into timed moves.
+    """Convert a planting scheme + classifications into timed Move objects.
 
-    Timing follows the 100-year phased approach:
-      Year 1-2:  Thinning (transition zones — remove competing conifers)
-      Year 3-5:  Pioneer planting (birch, alder, willow in corridors)
-      Year 5-10: Secondary wave (oak, cherry, hazel, holly)
-      Year 10-20: Climax establishment (beech, lime, yew)
-      Year 20+:  Natural regeneration + monitoring
+    Delegates to ``scheme_to_phased_moves`` for PHASE_SCHEDULE-aware timing,
+    then wraps the raw dicts as Move dataclass instances.  Also appends
+    monitoring moves for natural-regeneration opportunity zones.
     """
+    # ── Phased planting + thinning moves (via PHASE_SCHEDULE) ────────────
+    raw_moves = scheme_to_phased_moves(scheme, species_db)
+
     moves = []
-
-    # Thinning moves (year 1-2) — transition zones
-    thin_cells = [h for h, c in classifications.items() if c == "transition"]
-    for i, h in enumerate(thin_cells):
-        year = 1 + (i % 2)  # spread across 2 years
-        rec = {}  # would need snapshot lookup for species_removed
+    for rm in raw_moves:
         moves.append(Move(
-            year=year,
-            h3=h,
-            action="thin",
-            species_removed=None,  # will be filled from snapshot
-            rationale="Transition zone: thin competing conifer to release broadleaf",
-            priority=7,
-            score_before=scores.get(h, {}).get("overall"),
+            year=rm["year"],
+            h3=rm["h3"],
+            action=rm["action"],
+            species=rm.get("species"),
+            species_removed=rm.get("species_removed"),
+            method=rm.get("method"),
+            priority=rm.get("priority", 5),
+            rationale=rm.get("rationale", ""),
+            cluster_id=rm.get("cluster_id"),
+            citations=rm.get("citations", []),
+            score_before=scores.get(rm["h3"], {}).get("overall"),
         ))
 
-    # Planting moves — phased by succession stage
-    for action in scheme.actions:
-        sp = species_db.get(action.species, {})
-        succession = sp.get("succession", "secondary")
-
-        if succession == "pioneer":
-            year = 3 + hash(action.h3_id) % 3  # years 3-5
-        elif succession == "secondary":
-            year = 7 + hash(action.h3_id) % 4  # years 7-10
-        elif succession == "climax":
-            year = 12 + hash(action.h3_id) % 8  # years 12-19
-        else:
-            year = 5 + hash(action.h3_id) % 5
-
-        moves.append(Move(
-            year=year,
-            h3=action.h3_id,
-            action="plant",
-            species=action.species,
-            method=action.method,
-            priority=action.priority,
-            rationale=action.rationale,
-            cluster_id=action.cluster_id,
-            citations=action.citations,
-            score_before=scores.get(action.h3_id, {}).get("overall"),
-        ))
-
-    # Natural regeneration events (year 20+) — opportunity zones let nature fill
+    # ── Natural regeneration monitoring (opportunity zones) ──────────────
     opportunity_cells = [h for h, c in classifications.items() if c == "natural_regen"]
     for h in opportunity_cells[:200]:  # cap to keep moves manageable
         moves.append(Move(
-            year=20 + hash(h) % 10,  # years 20-29
+            year=20 + abs(hash(h)) % 10,  # years 20-29
             h3=h,
             action="monitor",
             rationale="Natural regeneration zone: monitor seed-rain colonization",

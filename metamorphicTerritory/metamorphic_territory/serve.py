@@ -11,6 +11,8 @@ Endpoints:
   GET  /scheme.geojson     — full GeoJSON export
   GET  /cell/{h3_index}    — individual cell detail
   GET  /snapshots          — simulation metrics over time
+  GET  /classifications    — block classifications
+  GET  /verification       — latest verification results
   GET  /health             — status check
 """
 
@@ -34,7 +36,7 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("metamorphic")
 
-app = FastAPI(title="metamorphicTerritory", version="0.1.0")
+app = FastAPI(title="metamorphicTerritory", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -53,6 +55,9 @@ PORT = int(os.environ.get("PORT", "8420"))
 # Cache for cell lookup
 _cell_index: dict[str, dict] = {}
 _simulation_summaries: list[dict] = []
+# Cache for new worker outputs
+_latest_classifications: dict = {}
+_latest_verification: dict = {}
 
 
 class SimulateRequest(BaseModel):
@@ -76,6 +81,8 @@ async def health():
         "has_pmtiles": has_pmtiles,
         "has_geojson": has_geojson,
         "cell_count": len(_cell_index),
+        "has_classifications": bool(_latest_classifications),
+        "has_verification": bool(_latest_verification),
     }
 
 
@@ -98,6 +105,8 @@ async def simulate(req: SimulateRequest):
             "elapsed_s": round(elapsed, 1),
             "has_tiles": has_tippecanoe,
             "geojson": str(GEOJSON_PATH),
+            "classifications": len(_latest_classifications),
+            "verification": _latest_verification.get("passed"),
         }
     except Exception as e:
         logger.error(f"Simulation failed: {e}", exc_info=True)
@@ -142,14 +151,58 @@ async def get_snapshots():
     return _simulation_summaries
 
 
+@app.get("/classifications")
+async def get_classifications():
+    """Return block classifications."""
+    if not _latest_classifications:
+        raise HTTPException(status_code=404, detail="No classifications available. POST /simulate first.")
+    # Serialize BlockClassification objects to dicts
+    result = {}
+    for h3_11, cls in _latest_classifications.items():
+        if hasattr(cls, "management_class"):
+            result[h3_11] = {
+                "management_class": cls.management_class,
+                "confidence": cls.confidence,
+                "strategy_name": cls.strategy_name,
+                "features": cls.features,
+                "tree_count": cls.tree_count,
+            }
+        else:
+            result[h3_11] = cls
+    return result
+
+
+@app.get("/verification")
+async def get_verification():
+    """Return latest verification results."""
+    if not _latest_verification:
+        raise HTTPException(status_code=404, detail="No verification results. POST /simulate first.")
+    return _latest_verification
+
+
 # ── Engine ──────────────────────────────────────────────────────────────────
 
 
 def _run_engine(req: SimulateRequest) -> dict:
-    """Run the metamorphic engine: load snapshot → simulate → export GeoJSON."""
-    global _cell_index, _simulation_summaries
+    """Run the metamorphic engine: load snapshot → simulate → export GeoJSON.
 
-    # Load the latest snapshot from the surveyor output
+    Restructured flow with worker modules:
+      1. Load snapshot + species DB
+      2. Fill terrain (Worker 5 — terrain.py)
+      3. Classify blocks (Worker 1 — classify.py)
+      4. Compute scores (existing)
+      5. Physarum corridors (existing)
+      6. Generate planting scheme WITH classifications (Worker 2 — planting.py)
+      7. Phase moves (Worker 3 — forecast.py)
+      8. Build cell_to_block mapping for per-class GoL (Worker 4 — gol.py)
+      9. Initialize GoL with per-class configs
+     10. Step with phased interventions
+     11. Verify (Worker 6 — verify.py)
+     12. Export GeoJSON with management_class in properties
+    """
+    global _cell_index, _simulation_summaries, _latest_classifications, _latest_verification
+
+    # ── 1. Load snapshot ─────────────────────────────────────────────────
     snapshot_path = Path(os.environ.get("SURVEYOR_OUTPUT", "../output"))
     snapshot_file = snapshot_path / f"{req.scan_id}_trees_res13.json"
 
@@ -169,12 +222,22 @@ def _run_engine(req: SimulateRequest) -> dict:
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from surveyor.guild import compatibility_score
-    from surveyor.sim.gol import ForestGoL, GoLConfig
     from surveyor.sim.physarum import find_planting_corridors
     from surveyor.sim.planting import generate_planting_scheme
     from surveyor.scores.engine import compute_scores, WEIGHT_PRESETS
 
-    # Compute scores
+    # ── 2. Fill terrain (Worker 5) ───────────────────────────────────────
+    from surveyor.sim.terrain import fill_terrain, compute_block_features
+    records = fill_terrain(records)
+    logger.info(f"Terrain filled for {len(records)} records")
+
+    # ── 3. Classify blocks (Worker 1) ────────────────────────────────────
+    from surveyor.sim.classify import classify_all_blocks
+    classifications = classify_all_blocks(records, species_db)
+    _latest_classifications = classifications
+    logger.info(f"Classified {len(classifications)} blocks into management classes")
+
+    # ── 4. Compute scores (existing) ─────────────────────────────────────
     import geopandas as gpd
     import pandas as pd
     from shapely.geometry import Point
@@ -186,26 +249,50 @@ def _run_engine(req: SimulateRequest) -> dict:
     )
     scores = compute_scores(gdf, weights=WEIGHT_PRESETS["restoration"])
 
-    # Physarum corridors
+    # ── 5. Physarum corridors (existing) ─────────────────────────────────
     corridors = find_planting_corridors(records)
 
-    # Generate planting scheme
-    scheme = generate_planting_scheme(records, scores, corridors, species_db, compatibility_score)
+    # ── 6. Generate planting scheme WITH classifications (Worker 2) ──────
+    scheme = generate_planting_scheme(
+        records, scores, corridors, species_db, compatibility_score,
+        classifications=classifications,  # NEW: class-aware species selection
+    )
 
-    # Run GoL simulation
-    config = GoLConfig(dt_years=1.0)
-    gol = ForestGoL(species_db, compatibility_score, config)
+    # ── 7. Phase moves (Worker 3) ────────────────────────────────────────
+    from surveyor.sim.forecast import scheme_to_phased_moves
+    moves = scheme_to_phased_moves(scheme, species_db, classifications)
+    moves_by_year = {}
+    for m in moves:
+        moves_by_year.setdefault(m["year"], []).append(m)
+    logger.info(f"Phased {len(moves)} moves across {len(moves_by_year)} distinct years")
+
+    # ── 8. Build cell_to_block mapping for GoL (Worker 4) ────────────────
+    cell_to_block = {}
+    for rec in records:
+        h13 = rec.get("h3_13") or rec.get("h3")
+        if not h13:
+            continue
+        try:
+            parent = h3.cell_to_parent(h13, 11)
+        except Exception:
+            continue
+        cls = classifications.get(parent)
+        if cls:
+            cell_to_block[h13] = cls.management_class
+
+    logger.info(f"Mapped {len(cell_to_block)} cells to management classes")
+
+    # ── 9. Initialize GoL with per-class configs ─────────────────────────
+    from surveyor.sim.gol import ForestGoL, GoLConfig, GOL_CLASS_CONFIGS
+    gol = ForestGoL(
+        species_db, compatibility_score,
+        config=GoLConfig(),
+        block_configs=GOL_CLASS_CONFIGS,
+        cell_to_block=cell_to_block,
+    )
     gol.seed_from_snapshot(records)
 
-    # Apply planting moves
-    for action in scheme.actions:
-        gol.apply_intervention([{
-            "h3": action.h3_id,
-            "action": "plant",
-            "species": action.species,
-        }])
-
-    # Run simulation, capture snapshots
+    # ── 10. Step with phased interventions ───────────────────────────────
     checkpoints = [0, 1, 3, 5, 7, 10, 15, 20]
     if req.years > 20:
         checkpoints.extend([y for y in [30, 50, 75, 100] if y <= req.years])
@@ -213,10 +300,34 @@ def _run_engine(req: SimulateRequest) -> dict:
     _simulation_summaries = []
     checkpoint_dir = DATA_DIR / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    # Save year 0 state (initial planting)
+
+    # Collect checkpoint states for verification
+    checkpoint_states = {}
+
+    # Save year 0 state (initial snapshot)
     _save_checkpoint(gol.grid, species_db, 0, checkpoint_dir)
+    checkpoint_states[0] = {
+        h3_id: {"s": c.species, "h": round(c.height_m, 2), "hp": round(c.health, 3)}
+        for h3_id, c in gol.grid.items()
+    }
+
     for yr in range(1, req.years + 1):
+        # Apply this year's phased moves
+        if yr in moves_by_year:
+            interventions = [
+                {
+                    "h3": m["h3"],
+                    "action": m.get("action", "plant"),
+                    "species": m["species"],
+                }
+                for m in moves_by_year[yr]
+                if m.get("species") or m.get("action") == "thin"
+            ]
+            if interventions:
+                gol.apply_intervention(interventions)
+
         summary = gol.step()
+
         if yr in checkpoints or yr == req.years:
             alive = sum(1 for c in gol.grid.values() if c.is_alive)
             species_set = set(c.species for c in gol.grid.values() if c.is_alive and c.species)
@@ -228,8 +339,19 @@ def _run_engine(req: SimulateRequest) -> dict:
                 "mean_health": round(np.mean([c.health for c in gol.grid.values() if c.is_alive]) if alive else 0, 3),
             })
             _save_checkpoint(gol.grid, species_db, yr, checkpoint_dir)
+            # Capture checkpoint state for verification
+            checkpoint_states[yr] = {
+                h3_id: {"s": c.species, "h": round(c.height_m, 2), "hp": round(c.health, 3)}
+                for h3_id, c in gol.grid.items()
+            }
 
-    # Export to GeoJSON: each H3 cell → polygon with properties
+    # ── 11. Verify (Worker 6) ────────────────────────────────────────────
+    from surveyor.sim.verify import verify_simulation
+    verification = verify_simulation(checkpoint_states, classifications, species_db)
+    _latest_verification = verification.to_dict()
+    logger.info(f"Verification: {_latest_verification['summary']}")
+
+    # ── 12. Export GeoJSON with management_class in properties ───────────
     features = []
     _cell_index = {}
 
@@ -243,6 +365,16 @@ def _run_engine(req: SimulateRequest) -> dict:
             continue
 
         sp_data = species_db.get(cell.species, {}) if cell.species else {}
+
+        # Look up management class for this cell
+        mgmt_class = cell_to_block.get(h3_id, "")
+        mgmt_cls_obj = None
+        if mgmt_class:
+            try:
+                parent_11 = h3.cell_to_parent(h3_id, 11)
+                mgmt_cls_obj = classifications.get(parent_11)
+            except Exception:
+                pass
 
         props = {
             "h3": h3_id,
@@ -259,6 +391,9 @@ def _run_engine(req: SimulateRequest) -> dict:
             "shade_tolerance": sp_data.get("shade_tolerance", 0),
             "drought_tolerance": sp_data.get("drought_tolerance", 0),
             "nitrogen_role": sp_data.get("nitrogen_role", "neutral"),
+            # NEW: management class from block classification
+            "management_class": mgmt_class,
+            "strategy_name": mgmt_cls_obj.strategy_name if mgmt_cls_obj else "",
         }
 
         # Add score if available

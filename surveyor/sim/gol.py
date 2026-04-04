@@ -54,25 +54,83 @@ class GoLConfig:
     drought_stress: float = 0.0  # 0 = normal, 1 = severe (global modifier)
 
 
+GOL_CLASS_CONFIGS = {
+    "A": GoLConfig(
+        dt_years=1.0,
+        mortality_threshold=0.05,
+        natural_regen_prob=0.01,
+        drought_stress=0.0,
+    ),
+    "B": GoLConfig(
+        dt_years=1.0,
+        mortality_threshold=0.08,
+        natural_regen_prob=0.04,
+        drought_stress=0.0,
+    ),
+    "C": GoLConfig(
+        dt_years=1.0,
+        mortality_threshold=0.15,
+        natural_regen_prob=0.03,
+        drought_stress=0.0,
+    ),
+    "D": GoLConfig(
+        dt_years=1.0,
+        mortality_threshold=0.08,
+        natural_regen_prob=0.02,
+        drought_stress=0.0,
+    ),
+    "E": GoLConfig(
+        dt_years=1.0,
+        mortality_threshold=0.12,
+        natural_regen_prob=0.05,
+        drought_stress=0.0,
+    ),
+    "F": GoLConfig(
+        dt_years=1.0,
+        mortality_threshold=0.12,
+        natural_regen_prob=0.01,
+        drought_stress=0.15,
+    ),
+    "G": GoLConfig(
+        dt_years=1.0,
+        mortality_threshold=0.10,
+        natural_regen_prob=0.01,
+        drought_stress=0.0,
+    ),
+}
+
+
 class ForestGoL:
     """Game of Life cellular automaton on the H3 res-13 grid.
 
     Runs forward in yearly steps, modeling succession + competition + mutualism.
     """
 
-    def __init__(self, species_db: dict, guild_scorer, config: Optional[GoLConfig] = None):
+    def __init__(self, species_db: dict, guild_scorer, config: Optional[GoLConfig] = None,
+                 block_configs: Optional[dict] = None, cell_to_block: Optional[dict] = None):
         """
         Args:
             species_db: {species_id: {...}} from species.json
             guild_scorer: callable(sp_a, sp_b) → float [-1, 1]
             config: simulation parameters
+            block_configs: {class_label: GoLConfig} per management class
+            cell_to_block: {h3_id: class_label} mapping cells to management classes
         """
         self.species_db = species_db
         self.guild_score = guild_scorer
         self.config = config or GoLConfig()
+        self.block_configs = block_configs or {}
+        self.cell_to_block = cell_to_block or {}
         self.grid: dict[str, CellState] = {}
         self.year: float = 0
         self.history: list[dict] = []  # snapshots for playback
+
+    def _config_for_cell(self, h3_id):
+        """Get GoL config for a cell based on its management class."""
+        cls = self.cell_to_block.get(h3_id)
+        if cls and cls in self.block_configs:
+            return self.block_configs[cls]
+        return self.config
 
     def seed_from_snapshot(self, snapshot_records: list[dict]):
         """Initialize grid from a tree snapshot."""
@@ -181,8 +239,9 @@ class ForestGoL:
         New plantings (h < 2m) are vulnerable to all stresses.
         Mature trees get a stability bonus proportional to their size.
         """
+        cfg = self._config_for_cell(cell.h3_id)
         sp = self.species_db.get(cell.species, {})
-        dt = self.config.dt_years
+        dt = cfg.dt_years
         succession = sp.get("succession", "secondary")
 
         # Maturity: established trees resist casual mortality
@@ -259,14 +318,14 @@ class ForestGoL:
 
         # Drought stress (global modifier)
         drought_tol = sp.get("drought_tolerance", 0.5)
-        drought_hit = self.config.drought_stress * (1 - drought_tol) * 0.05
+        drought_hit = cfg.drought_stress * (1 - drought_tol) * 0.05
 
         # Health update — mutualism heals, competition + drought hurts
         health_delta = mutualism - competition - drought_hit
         new_health = np.clip(cell.health + health_delta * dt, 0, 1)
 
         # Mortality — established trees need sustained stress to die
-        mort_threshold = self.config.mortality_threshold
+        mort_threshold = cfg.mortality_threshold
         if is_established:
             mort_threshold *= 0.5  # established trees survive at lower health
 
@@ -291,6 +350,8 @@ class ForestGoL:
         if cell.is_alive:
             return cell
 
+        cfg = self._config_for_cell(cell.h3_id)
+
         # Collect seed sources from neighbours
         seed_sources = {}
         for nb in neighbours:
@@ -300,7 +361,7 @@ class ForestGoL:
 
         if not seed_sources:
             # Random natural regeneration (wind/bird dispersal)
-            if np.random.random() < self.config.natural_regen_prob:
+            if np.random.random() < cfg.natural_regen_prob:
                 # Pioneer species most likely
                 pioneers = [
                     sid for sid, s in self.species_db.items()
