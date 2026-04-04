@@ -1086,10 +1086,14 @@ async def planting_gif():
 
 @app.get("/gif/zoom")
 async def planting_gif_zoom():
-    """Render a CLOSE-UP animated GIF showing individual hexagons.
+    """Terrain-contextual forestry GIF — hillshade + contours + streams + species hexes.
 
-    Focuses on a ~200m x 200m area in the center of the forest
-    where you can see each hex, each species, and the evolution.
+    Miyawaki method visualization: dense native planting, all strata simultaneously.
+    References:
+      Miyawaki A (1999) Creative ecology: restoration of native forests by native trees
+      Miyawaki A & Box EO (2007) The healing power of forests
+      Sharma et al (2022) Miyawaki forests in urban areas: a systematic review
+      UK Forestry Commission (2022) Managing Continuous Cover Forestry
     """
     import io
     import h3 as h3lib
@@ -1102,12 +1106,16 @@ async def planting_gif_zoom():
         from matplotlib.patches import Polygon as MplPolygon
         from matplotlib.collections import PatchCollection
         import imageio.v3 as iio
-    except ImportError:
-        raise HTTPException(500, "Install matplotlib + imageio")
+        import rasterio
+        from pyproj import Transformer
+    except ImportError as e:
+        raise HTTPException(500, f"Missing dependency: {e}")
 
     checkpoint_dir = DATA_DIR / "checkpoints"
     if not checkpoint_dir.exists():
         raise HTTPException(404, "No checkpoints")
+
+    COG_DIR = Path("/mnt/c/Users/Aiapaec/loki-Hooke/hooke-surveyor/data/260227/cog")
 
     phases = [0, 1, 3, 5, 7, 10, 15, 20]
     phase_data = {}
@@ -1116,18 +1124,16 @@ async def planting_gif_zoom():
         if cp.exists():
             with open(cp) as f:
                 phase_data[yr] = json.load(f)
-
     if len(phase_data) < 2:
         raise HTTPException(404, "Need at least 2 checkpoints")
 
-    # Species color map
+    # Species colors (deterministic hash)
     import colorsys
     all_species = set()
     for state in phase_data.values():
         for cell in state.values():
             if cell.get("s"):
                 all_species.add(cell["s"])
-
     species_colors = {}
     for sp in sorted(all_species):
         h = 0
@@ -1140,46 +1146,143 @@ async def planting_gif_zoom():
         r, g, b = colorsys.hls_to_rgb(hue, lit, sat)
         species_colors[sp] = (r, g, b)
 
-    # Find a dense area in the center of the forest for the close-up
+    # Find a dense patch center — use median of all cells
     sample = list(phase_data.values())[0]
-    all_lats, all_lngs = [], []
+    lats, lngs = [], []
     for h3_id in sample:
         try:
             lat, lng = h3lib.cell_to_latlng(h3_id)
-            all_lats.append(lat)
-            all_lngs.append(lng)
+            lats.append(lat)
+            lngs.append(lng)
         except:
             pass
+    center_lat = np.median(lats)
+    center_lng = np.median(lngs)
 
-    center_lat = np.median(all_lats)
-    center_lng = np.median(all_lngs)
+    # 300m window
+    dlat = 0.0015
+    dlng = 0.0022
+    extent_wgs = [center_lng - dlng, center_lng + dlng, center_lat - dlat, center_lat + dlat]
 
-    # ~200m window
-    dlat = 0.001  # ~111m
-    dlng = 0.0015  # ~105m
-    extent = [center_lng - dlng, center_lng + dlng, center_lat - dlat, center_lat + dlat]
+    # Load hillshade as background
+    hillshade_data = None
+    hillshade_extent = None
+    hs_path = COG_DIR / "hillshade_cog.tif"
+    if hs_path.exists():
+        try:
+            with rasterio.open(str(hs_path)) as src:
+                t_to = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+                t_from = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
+                x0, y0 = t_to.transform(extent_wgs[0], extent_wgs[2])
+                x1, y1 = t_to.transform(extent_wgs[1], extent_wgs[3])
+                window = rasterio.windows.from_bounds(
+                    min(x0,x1), min(y0,y1), max(x0,x1), max(y0,y1), src.transform
+                )
+                hillshade_data = src.read(1, window=window)
+                win_transform = rasterio.windows.transform(window, src.transform)
+                # Get WGS84 bounds of the window
+                cols = hillshade_data.shape[1]
+                rows = hillshade_data.shape[0]
+                wx0 = win_transform.c
+                wy0 = win_transform.f
+                wx1 = wx0 + cols * win_transform.a
+                wy1 = wy0 + rows * win_transform.e
+                hlng0, hlat0 = t_from.transform(min(wx0,wx1), min(wy0,wy1))
+                hlng1, hlat1 = t_from.transform(max(wx0,wx1), max(wy0,wy1))
+                hillshade_extent = [hlng0, hlng1, hlat0, hlat1]
+                logger.info(f"Hillshade loaded: {hillshade_data.shape}")
+        except Exception as e:
+            logger.warning(f"Hillshade load failed: {e}")
 
-    # Pre-compute hex boundaries for hexes in the window
+    # Load contours
+    contour_lines = []
+    contour_path = COG_DIR / "dtm_contours_5m.geojson"
+    if contour_path.exists():
+        try:
+            contours_gj = json.load(open(str(contour_path)))
+            for feat in contours_gj.get("features", []):
+                geom = feat.get("geometry", {})
+                if geom.get("type") == "LineString":
+                    coords = geom["coordinates"]
+                    # Filter to window
+                    in_window = any(
+                        extent_wgs[0] <= c[0] <= extent_wgs[1] and extent_wgs[2] <= c[1] <= extent_wgs[3]
+                        for c in coords
+                    )
+                    if in_window:
+                        contour_lines.append(coords)
+                elif geom.get("type") == "MultiLineString":
+                    for line in geom["coordinates"]:
+                        in_window = any(
+                            extent_wgs[0] <= c[0] <= extent_wgs[1] and extent_wgs[2] <= c[1] <= extent_wgs[3]
+                            for c in line
+                        )
+                        if in_window:
+                            contour_lines.append(line)
+            logger.info(f"Contours: {len(contour_lines)} lines in window")
+        except Exception as e:
+            logger.warning(f"Contour load failed: {e}")
+
+    # Load streams
+    stream_lines = []
+    stream_path = COG_DIR / "streams.geojson"
+    if stream_path.exists():
+        try:
+            streams_gj = json.load(open(str(stream_path)))
+            for feat in streams_gj.get("features", []):
+                geom = feat.get("geometry", {})
+                coords = geom.get("coordinates", [])
+                if geom.get("type") == "LineString":
+                    in_window = any(
+                        extent_wgs[0] <= c[0] <= extent_wgs[1] and extent_wgs[2] <= c[1] <= extent_wgs[3]
+                        for c in coords
+                    )
+                    if in_window:
+                        stream_lines.append(coords)
+            logger.info(f"Streams: {len(stream_lines)} lines in window")
+        except Exception as e:
+            logger.warning(f"Stream load failed: {e}")
+
+    # Pre-compute hex boundaries in window
     hex_boundaries = {}
     for h3_id in sample:
         try:
             lat, lng = h3lib.cell_to_latlng(h3_id)
-            if extent[0] <= lng <= extent[1] and extent[2] <= lat <= extent[3]:
+            if extent_wgs[0] <= lng <= extent_wgs[1] and extent_wgs[2] <= lat <= extent_wgs[3]:
                 boundary = h3lib.cell_to_boundary(h3_id)
                 coords = [(lng2, lat2) for lat2, lng2 in boundary]
                 hex_boundaries[h3_id] = coords
         except:
             pass
+    logger.info(f"Hex grid: {len(hex_boundaries)} hexes in 300m window")
 
-    logger.info(f"Zoom GIF: {len(hex_boundaries)} hexes in {dlat*111000:.0f}m x {dlng*70000:.0f}m window")
-
+    # Render frames
     frames = []
+    from collections import Counter
     for yr in sorted(phase_data.keys()):
         state = phase_data[yr]
-        fig, ax = plt.subplots(1, 1, figsize=(14, 12), dpi=150)
+        fig, ax = plt.subplots(1, 1, figsize=(16, 12), dpi=150)
         fig.patch.set_facecolor("#0a0e14")
         ax.set_facecolor("#0a0e14")
 
+        # Layer 1: Hillshade background
+        if hillshade_data is not None:
+            ax.imshow(hillshade_data, extent=hillshade_extent, cmap="gray",
+                     alpha=0.35, aspect="auto", interpolation="bilinear")
+
+        # Layer 2: Contour lines (brown, thin)
+        for line in contour_lines:
+            xs = [c[0] for c in line]
+            ys = [c[1] for c in line]
+            ax.plot(xs, ys, color="#8B6914", linewidth=0.4, alpha=0.5)
+
+        # Layer 3: Stream network (blue)
+        for line in stream_lines:
+            xs = [c[0] for c in line]
+            ys = [c[1] for c in line]
+            ax.plot(xs, ys, color="#4FC3F7", linewidth=1.2, alpha=0.7)
+
+        # Layer 4: Species hexes (semi-transparent)
         patches = []
         colors = []
         for h3_id, coords in hex_boundaries.items():
@@ -1188,48 +1291,49 @@ async def planting_gif_zoom():
             if sp and cell.get("hp", 0) > 0:
                 color = species_colors.get(sp, (0.4, 0.4, 0.4))
                 health = cell.get("hp", 0.5)
-                alpha_color = (*color, min(1.0, health * 0.85 + 0.1))
+                colors.append((*color, min(0.85, health * 0.7 + 0.1)))
             else:
-                alpha_color = (0.12, 0.12, 0.15, 0.4)
+                colors.append((0.08, 0.08, 0.10, 0.2))
             patches.append(MplPolygon(coords, closed=True))
-            colors.append(alpha_color)
 
         pc = PatchCollection(patches, facecolors=colors,
-                           edgecolors=(1, 1, 1, 0.15), linewidths=0.5)
+                           edgecolors=(1, 1, 1, 0.12), linewidths=0.4)
         ax.add_collection(pc)
 
-        ax.set_xlim(extent[0], extent[1])
-        ax.set_ylim(extent[2], extent[3])
+        ax.set_xlim(extent_wgs[0], extent_wgs[1])
+        ax.set_ylim(extent_wgs[2], extent_wgs[3])
         ax.set_aspect("equal")
         ax.axis("off")
 
-        # Title
+        # Title + metrics
         alive = sum(1 for h in hex_boundaries if state.get(h, {}).get("s") and state.get(h, {}).get("hp", 0) > 0)
-        species_in_view = len(set(state.get(h, {}).get("s") for h in hex_boundaries if state.get(h, {}).get("s")))
+        sp_counts = Counter(state.get(h, {}).get("s") for h in hex_boundaries if state.get(h, {}).get("s"))
+
         ax.text(0.02, 0.97, f"Year {yr}", transform=ax.transAxes,
                 fontsize=28, fontweight="bold", color="white", va="top", fontfamily="monospace")
-        ax.text(0.02, 0.91, f"{alive}/{len(hex_boundaries)} alive  |  {species_in_view} species",
-                transform=ax.transAxes, fontsize=14, color="#888", va="top", fontfamily="monospace")
+        ax.text(0.02, 0.91, f"{alive}/{len(hex_boundaries)} alive | {len(sp_counts)} species",
+                transform=ax.transAxes, fontsize=13, color="#999", va="top", fontfamily="monospace")
 
-        # Species legend for this view
-        from collections import Counter
-        sp_counts = Counter(state.get(h, {}).get("s") for h in hex_boundaries if state.get(h, {}).get("s"))
+        # Method citation
+        if yr == 0:
+            ax.text(0.02, 0.03, "Miyawaki (2007) / CCF (2022)", transform=ax.transAxes, fontsize=8, color="#555", va="bottom", fontfamily="monospace")
+
+        # Species legend
         for i, (sp, count) in enumerate(sp_counts.most_common(10)):
             color = species_colors.get(sp, (0.5, 0.5, 0.5))
-            ax.add_patch(plt.Rectangle((0.72, 0.95 - i * 0.045), 0.025, 0.03,
+            y_pos = 0.95 - i * 0.042
+            ax.add_patch(plt.Rectangle((0.74, y_pos - 0.01), 0.022, 0.028,
                          transform=ax.transAxes, facecolor=color, edgecolor="none"))
-            label = sp.replace("_", " ")
-            ax.text(0.755, 0.967 - i * 0.045, f"{label} ({count})",
-                    transform=ax.transAxes, fontsize=9, color="#bbb", va="top", fontfamily="monospace")
+            ax.text(0.77, y_pos + 0.012, f"{sp.replace('_', ' ')} ({count})",
+                    transform=ax.transAxes, fontsize=8, color="#ccc", va="top", fontfamily="monospace")
 
-        fig.tight_layout(pad=0.5)
+        fig.tight_layout(pad=0.3)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
         buf.seek(0)
-        frame = iio.imread(buf)
-        frames.append(frame)
-        logger.info(f"  Zoom frame year {yr}: {alive} alive, {species_in_view} species")
+        frames.append(iio.imread(buf))
+        logger.info(f"  Frame yr {yr}: {alive} alive, {len(sp_counts)} species")
 
     gif_buf = io.BytesIO()
     iio.imwrite(gif_buf, frames, extension=".gif", duration=2000, loop=0)
