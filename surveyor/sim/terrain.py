@@ -60,20 +60,143 @@ def fill_terrain(
     fields: list[str] = ("slope_deg", "twi", "solar_par_kwh", "ndvi"),
     max_distance_m: float = 100.0,
     k_neighbours: int = 3,
+    cog_dir: str = None,
 ) -> list[dict]:
-    """Fill missing terrain values via KD-tree + IDW interpolation.
+    """Fill missing terrain values — COG raster sampling with IDW fallback.
 
-    For each field:
-    1. Build KD-tree from records that have the value
-    2. Query k nearest donors for each record missing the value
-    3. IDW: value = sum(v_i / d_i) / sum(1 / d_i)
-    4. Beyond max_distance_m: use site median
+    Priority:
+    1. Sample directly from full-site COGs (slope, TWI, CHM at 0.8m resolution)
+    2. Fall back to KD-tree IDW from existing snapshot values
+    3. Last resort: site median
 
-    Returns records with filled values.  Original values are preserved.
+    The COGs on ll0odog at data/260227/cog/ cover ~72% of trees.
+    Combined with existing snapshot data, coverage reaches 95%+.
     """
-    n_total = len(records)
-    if n_total == 0:
-        return records
+    import os
+    from pathlib import Path
+
+    # Auto-detect COG directory
+    if cog_dir is None:
+        candidates = [
+            "/mnt/c/Users/Aiapaec/loki-Hooke/hooke-surveyor/data/260227/cog",
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "260227", "cog"),
+        ]
+        for c in candidates:
+            if os.path.isdir(c):
+                cog_dir = c
+                break
+
+    # COG field mapping: field_name -> (cog_filename, band, scale_factor)
+    COG_MAP = {
+        "slope_deg": ("slope_deg_cog.tif", 1, 1.0),
+        "twi": ("twi_cog.tif", 1, 1.0),
+        "chm": ("chm_0.5m_cog.tif", 1, 1.0),
+    }
+
+    # Phase 1: Sample from COGs (fastest, highest quality)
+    cog_sampled = {f: 0 for f in fields}
+    if cog_dir and os.path.isdir(cog_dir):
+        try:
+            import rasterio
+            from pyproj import Transformer
+
+            for field_name in fields:
+                if field_name not in COG_MAP:
+                    continue
+                cog_file, band, scale = COG_MAP[field_name]
+                cog_path = os.path.join(cog_dir, cog_file)
+                if not os.path.exists(cog_path):
+                    continue
+
+                with rasterio.open(cog_path) as src:
+                    transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+                    data = src.read(band)
+
+                    # Vectorized transform for all records
+                    lons = np.array([r.get("lon", 0) for r in records])
+                    lats = np.array([r.get("lat", 0) for r in records])
+                    xs, ys = transformer.transform(lons, lats)
+
+                    for i, r in enumerate(records):
+                        if r.get(field_name) is not None:
+                            continue  # already has data from snapshot
+                        try:
+                            row, col = rasterio.transform.rowcol(src.transform, xs[i], ys[i])
+                            if 0 <= row < src.height and 0 <= col < src.width:
+                                val = float(data[row, col])
+                                if not np.isnan(val) and val != src.nodata:
+                                    r[field_name] = round(val * scale, 2)
+                                    cog_sampled[field_name] += 1
+                        except (IndexError, ValueError):
+                            pass
+
+                logger.info(f"{field_name}: sampled {cog_sampled[field_name]} from COG {cog_file}")
+        except ImportError:
+            logger.warning("rasterio/pyproj not available — skipping COG sampling")
+
+    # Phase 2: KD-tree IDW for remaining gaps
+    for field_name in fields:
+        missing_indices = [i for i, r in enumerate(records) if r.get(field_name) is None]
+        if not missing_indices:
+            continue
+
+        # Build donor pool from records that now have data (original + COG-sampled)
+        donors = [(r["lat"], r["lon"], r[field_name]) for r in records
+                   if r.get(field_name) is not None and r.get("lat") and r.get("lon")]
+
+        if len(donors) < 3:
+            # Not enough donors — use site median
+            median = SITE_MEDIANS.get(field_name, 0)
+            for i in missing_indices:
+                records[i][field_name] = median
+            logger.warning(f"{field_name}: {len(donors)} donors, filling {len(missing_indices)} with median {median}")
+            continue
+
+        # Build KD-tree from donors
+        donor_coords = np.array([(d[0] * 111000, d[1] * 70000) for d in donors])  # approx meters
+        donor_values = np.array([d[2] for d in donors])
+        tree = KDTree(donor_coords)
+
+        max_dist_m = max_distance_m
+        idw_count = 0
+        median_count = 0
+
+        for i in missing_indices:
+            r = records[i]
+            pt = np.array([r["lat"] * 111000, r["lon"] * 70000])
+            dists, indices = tree.query(pt, k=min(k_neighbours, len(donors)))
+
+            if np.isscalar(dists):
+                dists = np.array([dists])
+                indices = np.array([indices])
+
+            # Filter to within max distance
+            mask = dists < max_dist_m
+            if mask.any():
+                d = dists[mask]
+                v = donor_values[indices[mask]]
+                d = np.maximum(d, 0.1)  # avoid division by zero
+                weights = 1.0 / d
+                value = float(np.sum(v * weights) / np.sum(weights))
+                # Clamp to valid range
+                lo, hi = VALID_RANGES.get(field_name, (-1e9, 1e9))
+                value = max(lo, min(hi, value))
+                r[field_name] = round(value, 2)
+                idw_count += 1
+            else:
+                r[field_name] = SITE_MEDIANS.get(field_name, 0)
+                median_count += 1
+
+        total_before = len(records) - len(missing_indices)
+        total_after = sum(1 for r in records if r.get(field_name) is not None)
+        logger.info(f"{field_name}: COG={cog_sampled.get(field_name,0)}, IDW={idw_count}, median={median_count} "
+                    f"({total_before}->{total_after}/{len(records)}, {total_after/len(records)*100:.1f}%)")
+
+    # Mark interpolated records
+    for r in records:
+        r["_terrain_interpolated"] = True
+
+    return records
 
     # Pre-compute XY coords for every record (metres)
     all_xy = np.array([_to_xy(r["lat"], r["lon"]) for r in records])
