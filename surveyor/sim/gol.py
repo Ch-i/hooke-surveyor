@@ -170,28 +170,37 @@ class ForestGoL:
     # ── Internal rules ───────────────────────────────────────────────────
 
     def _update_alive(self, cell: CellState, neighbours: list[CellState]) -> CellState:
-        """Update a living cell — succession, competition, mutualism.
+        """Update a living cell — realistic for a working forest.
 
-        Science-based dynamics:
-        - Pioneers grow fast but die under shade (shade_tolerance < 0.3)
-        - Climax species tolerate shade, eventually overtop pioneers
-        - N-fixers boost health of neighbouring heavy feeders (Simard 2012)
-        - Same-stratum competition is strong — only one canopy tree per hex
+        Key principle: established trees (h > 5m) are resilient. They survived
+        decades of competition already. Only genuine ecological stress kills:
+        - Deep shade on shade-intolerant pioneers (succession driver)
+        - Pioneer senescence after natural lifespan
+        - Severe drought on moisture-dependent species
+
+        New plantings (h < 2m) are vulnerable to all stresses.
+        Mature trees get a stability bonus proportional to their size.
         """
         sp = self.species_db.get(cell.species, {})
         dt = self.config.dt_years
         succession = sp.get("succession", "secondary")
 
-        # Growth — pioneers grow 2-4x faster than climax
+        # Maturity: established trees resist casual mortality
+        is_established = cell.height_m > 5.0 or cell.age_years > 10
+        is_seedling = cell.height_m < 2.0
+        # Stability factor: bigger trees are harder to kill (0.1 for seedlings, 1.0 for 30m trees)
+        stability = min(1.0, cell.height_m / 30.0) if is_established else 0.1
+
+        # Growth
         growth_rate = sp.get("growth_rate", 0.05)
         max_h = sp.get("max_height_m", 20)
         height_gain = growth_rate * (1 - cell.height_m / max_h) * cell.health * dt
         new_height = min(max_h, cell.height_m + height_gain)
 
-        # Competition + mutualism from neighbours
+        # Competition + mutualism
         competition = 0.0
         mutualism = 0.0
-        canopy_above = 0  # count of taller canopy neighbours
+        canopy_above = 0
         n_fixer_nearby = False
 
         for nb in neighbours:
@@ -199,62 +208,74 @@ class ForestGoL:
                 continue
             nb_sp = self.species_db.get(nb.species, {})
 
-            # Same-stratum competition (strong — only one winner per hex cluster)
+            # Same-stratum competition — only affects seedlings and suppressed trees
             if nb_sp.get("stratum") == sp.get("stratum"):
-                if nb.height_m > cell.height_m * 1.2:
-                    competition += 0.08  # stronger than before
-                elif nb.height_m > cell.height_m:
-                    competition += 0.03
+                if nb.height_m > cell.height_m * 1.5 and is_seedling:
+                    competition += 0.06  # seedlings under taller same-stratum = real stress
+                elif nb.height_m > cell.height_m * 1.2 and not is_established:
+                    competition += 0.02
 
-            # Canopy shading — critical for succession
-            if nb.height_m > cell.height_m + 3 and nb.canopy_cover > 0.3:
+            # Canopy shading — only stresses shade-intolerant species
+            if nb.height_m > cell.height_m + 5 and nb.canopy_cover > 0.4:
                 canopy_above += 1
 
             # Guild compatibility
             score = self.guild_score(cell.species, nb.species)
             if score > 0:
                 mutualism += score * 0.03
-            elif score < 0:
-                competition += abs(score) * 0.04
+            elif score < 0 and is_seedling:
+                competition += abs(score) * 0.02  # only seedlings suffer from antagonism
 
-            # N-fixer facilitation (Simard mycorrhizal network)
+            # N-fixer facilitation
             if nb_sp.get("nitrogen_role") == "fixer" and nb.health > 0.4:
                 n_fixer_nearby = True
 
-        # Shade impact — THE key succession driver
+        # Shade stress — drives succession but only kills shade-intolerant pioneers
         shade_tol = sp.get("shade_tolerance", 0.5)
-        if canopy_above > 0:
-            # Shade-intolerant pioneers die under canopy (this drives succession!)
-            shade_stress = canopy_above * 0.12 * (1 - shade_tol)
+        if canopy_above > 0 and shade_tol < 0.3:
+            # Light-demanding pioneers under dense canopy genuinely struggle
+            shade_stress = canopy_above * 0.06 * (1 - shade_tol)
+            if is_established:
+                shade_stress *= 0.3  # established pioneers resist longer
             competition += shade_stress
 
-        # Pioneer senescence — pioneers are short-lived (birch 60yr, alder 80yr)
-        if succession == "pioneer" and cell.age_years > 40:
-            senescence = (cell.age_years - 40) * 0.008  # increasing mortality with age
-            competition += senescence
+        # Pioneer senescence — natural lifespan (birch ~60yr, alder ~80yr)
+        if succession == "pioneer":
+            lifespan = 60 if sp.get("growth_rate", 0) > 0.1 else 80
+            if cell.age_years > lifespan * 0.7:
+                senescence = (cell.age_years - lifespan * 0.7) / lifespan * 0.05
+                competition += senescence
 
-        # N-fixer benefit to heavy feeders
-        if n_fixer_nearby and sp.get("nitrogen_role") == "heavy_feeder":
-            mutualism += 0.08
+        # N-fixer benefit
+        if n_fixer_nearby:
+            if sp.get("nitrogen_role") == "heavy_feeder":
+                mutualism += 0.06
+            else:
+                mutualism += 0.02  # all species benefit somewhat from N
 
-        # Shade tolerance modifies base competition
-        competition *= max(0.3, 1 - shade_tol * 0.5)
+        # Established tree resilience — reduce total competition impact
+        if is_established:
+            competition *= (1.0 - stability * 0.7)  # 30m tree: competition reduced 70%
 
-        # Drought stress
+        # Drought stress (global modifier)
         drought_tol = sp.get("drought_tolerance", 0.5)
-        drought_hit = self.config.drought_stress * (1 - drought_tol) * 0.1
+        drought_hit = self.config.drought_stress * (1 - drought_tol) * 0.05
 
-        # Health update
+        # Health update — mutualism heals, competition + drought hurts
         health_delta = mutualism - competition - drought_hit
         new_health = np.clip(cell.health + health_delta * dt, 0, 1)
 
-        # Mortality
-        if new_health < self.config.mortality_threshold:
-            return CellState(h3_id=cell.h3_id)  # dead → empty
+        # Mortality — established trees need sustained stress to die
+        mort_threshold = self.config.mortality_threshold
+        if is_established:
+            mort_threshold *= 0.5  # established trees survive at lower health
 
-        # Canopy cover grows with height
+        if new_health < mort_threshold:
+            return CellState(h3_id=cell.h3_id)  # dead
+
+        # Canopy cover
         max_cover = min(1.0, new_height / max_h * 1.2)
-        new_cover = min(max_cover, cell.canopy_cover + 0.03 * cell.health * dt)
+        new_cover = min(max_cover, cell.canopy_cover + 0.02 * cell.health * dt)
 
         return CellState(
             h3_id=cell.h3_id,
