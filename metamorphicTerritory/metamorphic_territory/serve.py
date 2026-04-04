@@ -224,6 +224,16 @@ def _run_engine(req: SimulateRequest) -> dict:
     records = [r for r in records if h3lib.cell_to_parent(r.get("h3_13") or r.get("h3"), 7) in HOOKE_PARK_H7]
     logger.info(f"Boundary filter: {before} -> {len(records)} trees ({before - len(records)} outside Hooke Park)")
 
+    # Forest density mask — exclude sparse blocks (<10 trees/block = isolated field trees)
+    block_counts = {}
+    for r in records:
+        parent = h3lib.cell_to_parent(r.get("h3_13") or r.get("h3"), 11)
+        block_counts[parent] = block_counts.get(parent, 0) + 1
+    forest_blocks = {b for b, c in block_counts.items() if c >= 10}
+    before2 = len(records)
+    records = [r for r in records if h3lib.cell_to_parent(r.get("h3_13") or r.get("h3"), 11) in forest_blocks]
+    logger.info(f"Forest mask: {before2} -> {len(records)} trees ({before2 - len(records)} in sparse/field blocks)")
+
     # Load species database
     species_path = Path(os.environ.get("SPECIES_DB", "../species_db/species.json"))
     with open(species_path) as f:
@@ -1070,6 +1080,163 @@ async def planting_gif():
 
     from fastapi.responses import Response
     return Response(content=gif_bytes, media_type="image/gif",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+
+@app.get("/gif/zoom")
+async def planting_gif_zoom():
+    """Render a CLOSE-UP animated GIF showing individual hexagons.
+
+    Focuses on a ~200m x 200m area in the center of the forest
+    where you can see each hex, each species, and the evolution.
+    """
+    import io
+    import h3 as h3lib
+    import numpy as np
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Polygon as MplPolygon
+        from matplotlib.collections import PatchCollection
+        import imageio.v3 as iio
+    except ImportError:
+        raise HTTPException(500, "Install matplotlib + imageio")
+
+    checkpoint_dir = DATA_DIR / "checkpoints"
+    if not checkpoint_dir.exists():
+        raise HTTPException(404, "No checkpoints")
+
+    phases = [0, 1, 3, 5, 7, 10, 15, 20]
+    phase_data = {}
+    for yr in phases:
+        cp = checkpoint_dir / f"year_{yr:03d}.json"
+        if cp.exists():
+            with open(cp) as f:
+                phase_data[yr] = json.load(f)
+
+    if len(phase_data) < 2:
+        raise HTTPException(404, "Need at least 2 checkpoints")
+
+    # Species color map
+    import colorsys
+    all_species = set()
+    for state in phase_data.values():
+        for cell in state.values():
+            if cell.get("s"):
+                all_species.add(cell["s"])
+
+    species_colors = {}
+    for sp in sorted(all_species):
+        h = 0
+        for c in sp:
+            h = h * 31 + ord(c)
+        h = h & 0xFFFFFFFF
+        hue = (h % 360) / 360.0
+        sat = 0.55 + (h % 30) / 100.0
+        lit = 0.35 + (h % 20) / 100.0
+        r, g, b = colorsys.hls_to_rgb(hue, lit, sat)
+        species_colors[sp] = (r, g, b)
+
+    # Find a dense area in the center of the forest for the close-up
+    sample = list(phase_data.values())[0]
+    all_lats, all_lngs = [], []
+    for h3_id in sample:
+        try:
+            lat, lng = h3lib.cell_to_latlng(h3_id)
+            all_lats.append(lat)
+            all_lngs.append(lng)
+        except:
+            pass
+
+    center_lat = np.median(all_lats)
+    center_lng = np.median(all_lngs)
+
+    # ~200m window
+    dlat = 0.001  # ~111m
+    dlng = 0.0015  # ~105m
+    extent = [center_lng - dlng, center_lng + dlng, center_lat - dlat, center_lat + dlat]
+
+    # Pre-compute hex boundaries for hexes in the window
+    hex_boundaries = {}
+    for h3_id in sample:
+        try:
+            lat, lng = h3lib.cell_to_latlng(h3_id)
+            if extent[0] <= lng <= extent[1] and extent[2] <= lat <= extent[3]:
+                boundary = h3lib.cell_to_boundary(h3_id)
+                coords = [(lng2, lat2) for lat2, lng2 in boundary]
+                hex_boundaries[h3_id] = coords
+        except:
+            pass
+
+    logger.info(f"Zoom GIF: {len(hex_boundaries)} hexes in {dlat*111000:.0f}m x {dlng*70000:.0f}m window")
+
+    frames = []
+    for yr in sorted(phase_data.keys()):
+        state = phase_data[yr]
+        fig, ax = plt.subplots(1, 1, figsize=(14, 12), dpi=150)
+        fig.patch.set_facecolor("#0a0e14")
+        ax.set_facecolor("#0a0e14")
+
+        patches = []
+        colors = []
+        for h3_id, coords in hex_boundaries.items():
+            cell = state.get(h3_id, {})
+            sp = cell.get("s")
+            if sp and cell.get("hp", 0) > 0:
+                color = species_colors.get(sp, (0.4, 0.4, 0.4))
+                health = cell.get("hp", 0.5)
+                alpha_color = (*color, min(1.0, health * 0.85 + 0.1))
+            else:
+                alpha_color = (0.12, 0.12, 0.15, 0.4)
+            patches.append(MplPolygon(coords, closed=True))
+            colors.append(alpha_color)
+
+        pc = PatchCollection(patches, facecolors=colors,
+                           edgecolors=(1, 1, 1, 0.15), linewidths=0.5)
+        ax.add_collection(pc)
+
+        ax.set_xlim(extent[0], extent[1])
+        ax.set_ylim(extent[2], extent[3])
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+        # Title
+        alive = sum(1 for h in hex_boundaries if state.get(h, {}).get("s") and state.get(h, {}).get("hp", 0) > 0)
+        species_in_view = len(set(state.get(h, {}).get("s") for h in hex_boundaries if state.get(h, {}).get("s")))
+        ax.text(0.02, 0.97, f"Year {yr}", transform=ax.transAxes,
+                fontsize=28, fontweight="bold", color="white", va="top", fontfamily="monospace")
+        ax.text(0.02, 0.91, f"{alive}/{len(hex_boundaries)} alive  |  {species_in_view} species",
+                transform=ax.transAxes, fontsize=14, color="#888", va="top", fontfamily="monospace")
+
+        # Species legend for this view
+        from collections import Counter
+        sp_counts = Counter(state.get(h, {}).get("s") for h in hex_boundaries if state.get(h, {}).get("s"))
+        for i, (sp, count) in enumerate(sp_counts.most_common(10)):
+            color = species_colors.get(sp, (0.5, 0.5, 0.5))
+            ax.add_patch(plt.Rectangle((0.72, 0.95 - i * 0.045), 0.025, 0.03,
+                         transform=ax.transAxes, facecolor=color, edgecolor="none"))
+            label = sp.replace("_", " ")
+            ax.text(0.755, 0.967 - i * 0.045, f"{label} ({count})",
+                    transform=ax.transAxes, fontsize=9, color="#bbb", va="top", fontfamily="monospace")
+
+        fig.tight_layout(pad=0.5)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
+        buf.seek(0)
+        frame = iio.imread(buf)
+        frames.append(frame)
+        logger.info(f"  Zoom frame year {yr}: {alive} alive, {species_in_view} species")
+
+    gif_buf = io.BytesIO()
+    iio.imwrite(gif_buf, frames, extension=".gif", duration=2000, loop=0)
+    gif_buf.seek(0)
+
+    from fastapi.responses import Response
+    return Response(content=gif_buf.getvalue(), media_type="image/gif",
                     headers={"Cache-Control": "public, max-age=3600"})
 
 
