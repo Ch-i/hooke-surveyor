@@ -92,7 +92,10 @@ def generate_planting_scheme(
             intervention_cells.append((h, rec, need, corridor))
 
     intervention_cells.sort(key=lambda x: x[2], reverse=True)
-    logger.info(f"Identified {len(intervention_cells)} intervention cells")
+    # Cap interventions — focus on highest-need cells for a realistic plan
+    max_interventions = min(len(intervention_cells), 15000)
+    intervention_cells = intervention_cells[:max_interventions]
+    logger.info(f"Identified {len(intervention_cells)} intervention cells (capped at {max_interventions})")
 
     # Select species for each cell
     actions = []
@@ -137,57 +140,85 @@ def _select_species(
     h3_id: str, rec: dict, all_records: dict,
     species_db: dict, guild_scorer, corridor_strength: float,
 ) -> str:
-    """Select the best species for a cell based on site conditions + neighbours."""
-    # Get neighbour species
+    """Select species based on site conditions, succession stage, and guild compatibility.
+
+    Science: syntropic agroforestry (Gotsch) — pioneers establish first along
+    corridors, N-fixers build soil, climax follows under canopy shelter.
+    Simard (2012): ECM networks need pioneer birch/alder to establish before oak.
+    """
     neighbours = rec.get("neighbours", [])
     nb_species = set()
+    nb_heights = []
     for nb_h in neighbours:
         nb_rec = all_records.get(nb_h, {})
         sp = nb_rec.get("species_detected")
         if sp:
             nb_species.add(sp)
+            nb_heights.append(nb_rec.get("height_m", 0))
 
-    # Score each candidate species
+    # Context: is this an open site or under existing canopy?
+    own_height = rec.get("height_m", 0)
+    avg_nb_height = sum(nb_heights) / max(len(nb_heights), 1)
+    under_canopy = avg_nb_height > 8 or own_height > 10
+    is_corridor = corridor_strength > 0.3
+    is_empty = rec.get("status") == "lost" or rec.get("species_detected") is None
+
+    # Determine which succession stage is appropriate for this cell
+    # Gotsch principle: open ground → pioneers + N-fixers
+    #                   under young canopy → secondary
+    #                   under mature canopy → climax
+    if is_empty and not under_canopy:
+        target_succession = "pioneer"
+    elif under_canopy and avg_nb_height > 15:
+        target_succession = "climax"
+    elif under_canopy:
+        target_succession = "secondary"
+    else:
+        target_succession = "pioneer"
+
+    # Corridors always get pioneers — they're the connection tissue
+    if is_corridor and is_empty:
+        target_succession = "pioneer"
+
     scores = {}
     for sp_id, sp in species_db.items():
         if sp.get("stratum") == "ground":
-            continue  # skip ground layer for tree planting
+            continue
 
         score = 0.0
 
-        # Guild compatibility with neighbours
+        # Succession match (strongest signal)
+        if sp.get("succession") == target_succession:
+            score += 0.35
+        elif target_succession == "pioneer" and sp.get("succession") != "pioneer":
+            score -= 0.3  # penalize non-pioneers in open ground
+
+        # N-fixers get strong bonus in early succession (Simard 2012)
+        if sp.get("nitrogen_role") == "fixer":
+            if not under_canopy:
+                score += 0.25  # critical for soil preparation
+            else:
+                score += 0.05
+
+        # Guild compatibility
         for nb_sp in nb_species:
-            score += guild_scorer(sp_id, nb_sp) * 0.3
+            score += guild_scorer(sp_id, nb_sp) * 0.2
 
         # Site suitability
-        slope = rec.get("slope_deg", 10)
-        twi = rec.get("twi", 8)
-        solar = rec.get("solar_par_kwh", 900)
-
-        # Drought tolerance matters on dry sites
+        twi = rec.get("twi") or 8
         if twi < 6:
-            score += sp.get("drought_tolerance", 0.5) * 0.2
-
-        # Shade tolerance matters under canopy
-        if rec.get("height_m", 0) > 10:
+            score += sp.get("drought_tolerance", 0.5) * 0.15
+        if under_canopy:
             score += sp.get("shade_tolerance", 0.5) * 0.2
 
-        # Succession stage: corridors want pioneers, interior wants climax
-        if corridor_strength > 0.5:
-            if sp.get("succession") == "pioneer":
-                score += 0.15
-        else:
-            if sp.get("succession") == "climax":
-                score += 0.15
-
-        # N-fixers are always valuable
-        if sp.get("nitrogen_role") == "fixer":
-            score += 0.1
+        # Corridor connectivity: fast-growing species for rapid canopy closure
+        if is_corridor:
+            score += sp.get("growth_rate", 0.05) * 2.0
 
         scores[sp_id] = score
 
     if not scores:
-        return "pedunculate_oak"  # safe default
+        return "common_alder"  # N-fixer default
 
     return max(scores, key=scores.get)
 
@@ -236,7 +267,7 @@ def _cluster_actions(actions: list[PlantingAction]) -> list[PlantingAction]:
     # Simple clustering by H3 res-11 parent
     clusters = {}
     for action in actions:
-        parent = h3.h3_to_parent(action.h3_id, 11)
+        parent = h3.cell_to_parent(action.h3_id, 11)
         clusters.setdefault(parent, []).append(action)
 
     cluster_id = 0

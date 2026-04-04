@@ -778,6 +778,155 @@ async def planting_report():
     return HTMLResponse(html)
 
 
+
+@app.get("/gif")
+async def planting_gif():
+    """Render an animated GIF of the planting scheme evolving over time.
+
+    Each frame = one checkpoint year. Hexagons colored by species.
+    Returns a GIF image directly.
+    """
+    import io
+    import h3 as h3lib
+    import numpy as np
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Polygon as MplPolygon
+        from matplotlib.collections import PatchCollection
+        import imageio.v3 as iio
+    except ImportError:
+        raise HTTPException(500, "Install matplotlib + imageio: pip install matplotlib imageio")
+
+    checkpoint_dir = DATA_DIR / "checkpoints"
+    if not checkpoint_dir.exists():
+        raise HTTPException(404, "No checkpoints")
+
+    # Load planting phases
+    phases = [0, 1, 3, 5, 7, 10, 15, 20]
+    phase_data = {}
+    for yr in phases:
+        cp = checkpoint_dir / f"year_{yr:03d}.json"
+        if cp.exists():
+            with open(cp) as f:
+                phase_data[yr] = json.load(f)
+
+    if len(phase_data) < 2:
+        raise HTTPException(404, "Need at least 2 checkpoints")
+
+    # Build species → color map (deterministic hash, same as frontend)
+    all_species = set()
+    for state in phase_data.values():
+        for cell in state.values():
+            if cell.get("s"):
+                all_species.add(cell["s"])
+
+    species_colors = {}
+    for sp in sorted(all_species):
+        h = 0
+        for c in sp:
+            h = h * 31 + ord(c)
+        h = h & 0xFFFFFFFF
+        hue = (h % 360) / 360.0
+        sat = 0.55 + (h % 30) / 100.0
+        lit = 0.35 + (h % 20) / 100.0
+        # HSL to RGB
+        import colorsys
+        r, g, b = colorsys.hls_to_rgb(hue, lit, sat)
+        species_colors[sp] = (r, g, b)
+
+    # Pre-compute hex boundaries (cache across frames)
+    logger.info(f"Rendering GIF: {len(phase_data)} frames, {len(all_species)} species")
+    hex_boundaries = {}
+    sample_state = list(phase_data.values())[0]
+    for h3_id in sample_state:
+        try:
+            boundary = h3lib.cell_to_boundary(h3_id)
+            coords = [(lng, lat) for lat, lng in boundary]
+            hex_boundaries[h3_id] = coords
+        except Exception:
+            pass
+
+    # Compute bounds
+    all_lngs = [c[0] for coords in hex_boundaries.values() for c in coords]
+    all_lats = [c[1] for coords in hex_boundaries.values() for c in coords]
+    min_lng, max_lng = min(all_lngs), max(all_lngs)
+    min_lat, max_lat = min(all_lats), max(all_lats)
+    pad = 0.001
+    extent = [min_lng - pad, max_lng + pad, min_lat - pad, max_lat + pad]
+
+    # Render frames
+    frames = []
+    for yr in sorted(phase_data.keys()):
+        state = phase_data[yr]
+        fig, ax = plt.subplots(1, 1, figsize=(12, 10), dpi=100)
+        fig.patch.set_facecolor("#0a0e14")
+        ax.set_facecolor("#0a0e14")
+
+        patches = []
+        colors = []
+        for h3_id, coords in hex_boundaries.items():
+            cell = state.get(h3_id, {})
+            sp = cell.get("s")
+            if sp and cell.get("hp", 0) > 0:
+                color = species_colors.get(sp, (0.4, 0.4, 0.4))
+                health = cell.get("hp", 0.5)
+                alpha_color = (*color, min(1.0, health * 0.8 + 0.15))
+            else:
+                alpha_color = (0.15, 0.15, 0.18, 0.3)
+            patches.append(MplPolygon(coords, closed=True))
+            colors.append(alpha_color)
+
+        pc = PatchCollection(patches, facecolors=colors, edgecolors=(1, 1, 1, 0.06), linewidths=0.3)
+        ax.add_collection(pc)
+
+        ax.set_xlim(extent[0], extent[1])
+        ax.set_ylim(extent[2], extent[3])
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+        # Title
+        alive = sum(1 for c in state.values() if c.get("s") and c.get("hp", 0) > 0)
+        species_count = len(set(c.get("s") for c in state.values() if c.get("s")))
+        ax.text(0.02, 0.97, f"Year {yr}", transform=ax.transAxes,
+                fontsize=24, fontweight="bold", color="white", va="top", fontfamily="monospace")
+        ax.text(0.02, 0.91, f"{alive:,} alive  |  {species_count} species",
+                transform=ax.transAxes, fontsize=12, color="#888", va="top", fontfamily="monospace")
+
+        # Species legend (top 8)
+        from collections import Counter
+        sp_counts = Counter(c.get("s") for c in state.values() if c.get("s"))
+        for i, (sp, count) in enumerate(sp_counts.most_common(8)):
+            color = species_colors.get(sp, (0.5, 0.5, 0.5))
+            ax.add_patch(plt.Rectangle((0.75, 0.95 - i * 0.04), 0.02, 0.025,
+                         transform=ax.transAxes, facecolor=color, edgecolor="none"))
+            ax.text(0.78, 0.962 - i * 0.04, f"{sp.replace('_', ' ')} ({count:,})",
+                    transform=ax.transAxes, fontsize=8, color="#aaa", va="top", fontfamily="monospace")
+
+        # Render to numpy array
+        fig.tight_layout(pad=0.5)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
+        buf.seek(0)
+        frame = iio.imread(buf)
+        frames.append(frame)
+        logger.info(f"  Frame year {yr}: {alive:,} alive, {species_count} species")
+
+    # Stitch into GIF
+    gif_buf = io.BytesIO()
+    iio.imwrite(gif_buf, frames, extension=".gif", duration=1500, loop=0)
+    gif_buf.seek(0)
+    gif_bytes = gif_buf.getvalue()
+    logger.info(f"GIF complete: {len(frames)} frames, {len(gif_bytes) / 1024:.0f} KB")
+
+    from fastapi.responses import Response
+    return Response(content=gif_bytes, media_type="image/gif",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
 def main():
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=PORT)

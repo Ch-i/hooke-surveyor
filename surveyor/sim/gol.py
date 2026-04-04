@@ -80,13 +80,28 @@ class ForestGoL:
             h = rec.get("h3_13") or rec.get("h3")
             if not h:
                 continue
+            ndvi = rec.get("ndvi") or 0.6
+            height = rec.get("height_m") or 0
+            crown = rec.get("crown_area_m2") or 0
+            species = rec.get("species_detected")
+
+            # Assign placeholder species from height when detection is missing
+            # (crown segmentation produces geometry only, no species classification)
+            if not species and height >= 2:
+                if height > 15:
+                    species = "scots_pine"    # dominant conifer at Hooke
+                elif height > 5:
+                    species = "birch"         # common secondary broadleaf
+                else:
+                    species = "hazel"         # understory/shrub layer
+
             self.grid[h] = CellState(
                 h3_id=h,
-                species=rec.get("species_detected"),
-                age_years=0,  # unknown — estimate from height
-                health=min(1.0, rec.get("ndvi", 0.6) / 0.8),
-                height_m=rec.get("height_m", 0),
-                canopy_cover=min(1.0, rec.get("crown_area_m2", 0) / 1.44),  # hex area ~1.44m²
+                species=species,
+                age_years=max(0, height * 2),  # rough age estimate from height
+                health=min(1.0, ndvi / 0.8),
+                height_m=height,
+                canopy_cover=min(1.0, crown / 1.44),
             )
         logger.info(f"GoL seeded with {len(self.grid)} cells, "
                      f"{sum(1 for c in self.grid.values() if c.is_alive)} alive")
@@ -155,37 +170,75 @@ class ForestGoL:
     # ── Internal rules ───────────────────────────────────────────────────
 
     def _update_alive(self, cell: CellState, neighbours: list[CellState]) -> CellState:
-        """Update a living cell for one timestep."""
+        """Update a living cell — succession, competition, mutualism.
+
+        Science-based dynamics:
+        - Pioneers grow fast but die under shade (shade_tolerance < 0.3)
+        - Climax species tolerate shade, eventually overtop pioneers
+        - N-fixers boost health of neighbouring heavy feeders (Simard 2012)
+        - Same-stratum competition is strong — only one canopy tree per hex
+        """
         sp = self.species_db.get(cell.species, {})
         dt = self.config.dt_years
+        succession = sp.get("succession", "secondary")
 
-        # Growth
+        # Growth — pioneers grow 2-4x faster than climax
         growth_rate = sp.get("growth_rate", 0.05)
         max_h = sp.get("max_height_m", 20)
         height_gain = growth_rate * (1 - cell.height_m / max_h) * cell.health * dt
         new_height = min(max_h, cell.height_m + height_gain)
 
-        # Competition pressure (same-stratum neighbours)
+        # Competition + mutualism from neighbours
         competition = 0.0
         mutualism = 0.0
+        canopy_above = 0  # count of taller canopy neighbours
+        n_fixer_nearby = False
+
         for nb in neighbours:
             if not nb.is_alive:
                 continue
             nb_sp = self.species_db.get(nb.species, {})
+
+            # Same-stratum competition (strong — only one winner per hex cluster)
             if nb_sp.get("stratum") == sp.get("stratum"):
-                # Taller neighbour suppresses
-                if nb.height_m > cell.height_m:
-                    competition += 0.05
+                if nb.height_m > cell.height_m * 1.2:
+                    competition += 0.08  # stronger than before
+                elif nb.height_m > cell.height_m:
+                    competition += 0.03
+
+            # Canopy shading — critical for succession
+            if nb.height_m > cell.height_m + 3 and nb.canopy_cover > 0.3:
+                canopy_above += 1
+
             # Guild compatibility
             score = self.guild_score(cell.species, nb.species)
             if score > 0:
-                mutualism += score * 0.02
+                mutualism += score * 0.03
             elif score < 0:
-                competition += abs(score) * 0.03
+                competition += abs(score) * 0.04
 
-        # Shade tolerance modifies competition impact
+            # N-fixer facilitation (Simard mycorrhizal network)
+            if nb_sp.get("nitrogen_role") == "fixer" and nb.health > 0.4:
+                n_fixer_nearby = True
+
+        # Shade impact — THE key succession driver
         shade_tol = sp.get("shade_tolerance", 0.5)
-        competition *= (1 - shade_tol)
+        if canopy_above > 0:
+            # Shade-intolerant pioneers die under canopy (this drives succession!)
+            shade_stress = canopy_above * 0.12 * (1 - shade_tol)
+            competition += shade_stress
+
+        # Pioneer senescence — pioneers are short-lived (birch 60yr, alder 80yr)
+        if succession == "pioneer" and cell.age_years > 40:
+            senescence = (cell.age_years - 40) * 0.008  # increasing mortality with age
+            competition += senescence
+
+        # N-fixer benefit to heavy feeders
+        if n_fixer_nearby and sp.get("nitrogen_role") == "heavy_feeder":
+            mutualism += 0.08
+
+        # Shade tolerance modifies base competition
+        competition *= max(0.3, 1 - shade_tol * 0.5)
 
         # Drought stress
         drought_tol = sp.get("drought_tolerance", 0.5)
@@ -195,9 +248,13 @@ class ForestGoL:
         health_delta = mutualism - competition - drought_hit
         new_health = np.clip(cell.health + health_delta * dt, 0, 1)
 
-        # Mortality check
+        # Mortality
         if new_health < self.config.mortality_threshold:
             return CellState(h3_id=cell.h3_id)  # dead → empty
+
+        # Canopy cover grows with height
+        max_cover = min(1.0, new_height / max_h * 1.2)
+        new_cover = min(max_cover, cell.canopy_cover + 0.03 * cell.health * dt)
 
         return CellState(
             h3_id=cell.h3_id,
@@ -205,7 +262,7 @@ class ForestGoL:
             age_years=cell.age_years + dt,
             health=round(new_health, 3),
             height_m=round(new_height, 2),
-            canopy_cover=min(1.0, cell.canopy_cover + 0.02 * dt),
+            canopy_cover=round(new_cover, 3),
         )
 
     def _try_recruit(self, cell: CellState, neighbours: list[CellState]) -> CellState:
@@ -249,5 +306,5 @@ class ForestGoL:
 
     def _get_neighbours(self, h: str) -> list[CellState]:
         """Get cell states for k-ring neighbours."""
-        ring = h3.k_ring(h, self.config.competition_radius) - {h}
+        ring = set(h3.grid_disk(h, self.config.competition_radius)) - {h}
         return [self.grid[nb] for nb in ring if nb in self.grid]
