@@ -50,6 +50,11 @@ GEOJSON_PATH = DATA_DIR / "scheme.geojson"
 PMTILES_PATH = DATA_DIR / "scheme.pmtiles"
 SNAPSHOT_PATH = DATA_DIR / "snapshots.json"
 
+
+# Hooke Park boundary — 3 H3 res-7 cells covering the 140ha estate
+# Trees outside these cells are excluded from simulation
+HOOKE_PARK_H7 = {"87195bb95ffffff", "87195bb82ffffff", "87195bb91ffffff"}
+
 PORT = int(os.environ.get("PORT", "8420"))
 
 # Cache for cell lookup
@@ -212,6 +217,12 @@ def _run_engine(req: SimulateRequest) -> dict:
     with open(snapshot_file) as f:
         records = json.load(f)
     logger.info(f"Loaded {len(records)} trees from {snapshot_file.name}")
+
+    # Clip to Hooke Park boundary (3 H3 res-7 cells)
+    import h3 as h3lib
+    before = len(records)
+    records = [r for r in records if h3lib.cell_to_parent(r.get("h3_13") or r.get("h3"), 7) in HOOKE_PARK_H7]
+    logger.info(f"Boundary filter: {before} -> {len(records)} trees ({before - len(records)} outside Hooke Park)")
 
     # Load species database
     species_path = Path(os.environ.get("SPECIES_DB", "../species_db/species.json"))
