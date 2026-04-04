@@ -140,85 +140,177 @@ def _select_species(
     h3_id: str, rec: dict, all_records: dict,
     species_db: dict, guild_scorer, corridor_strength: float,
 ) -> str:
-    """Select species based on site conditions, succession stage, and guild compatibility.
+    """Select species using terrain, climate, succession, and timber objectives.
 
-    Science: syntropic agroforestry (Gotsch) — pioneers establish first along
-    corridors, N-fixers build soil, climax follows under canopy shelter.
-    Simard (2012): ECM networks need pioneer birch/alder to establish before oak.
+    Site data used (from LiDAR + COGs):
+      slope_deg   — steep slopes get stabilization species
+      twi         — wet areas get riparian, dry get drought-tolerant
+      solar_par_kwh — north-facing shade-tolerant, south-facing timber/fruit
+      height_m    — existing canopy determines succession stage
+      ndvi        — vegetation health indicates soil quality
+
+    Science grounding:
+      Gotsch syntropic: stratified succession with N-fixer nurse crops
+      Simard 2012: ECM networks need pioneer birch/alder before oak
+      Dorset climate 2050: +2-3C, -15% summer rain → drought resilience
+      Hedgerow technique: dense thorny shrubs on steep slopes
+      ECM technique: oak/beech with birch/alder nurse rings
+      Coppice technique: sweet chestnut/hazel for short-rotation timber
     """
-    neighbours = rec.get("neighbours", [])
+    # ── Gather site context ──
+    slope = rec.get("slope_deg") or 7  # median for Hooke Park
+    twi = rec.get("twi") or 3  # topographic wetness index
+    solar = rec.get("solar_par_kwh") or 900  # PAR kWh/m2/yr
+    own_height = rec.get("height_m", 0)
+    ndvi = rec.get("ndvi") or 0.6
+    is_empty = rec.get("status") == "lost" or rec.get("species_detected") is None
+    is_corridor = corridor_strength > 0.3
+
+    # Neighbour context
     nb_species = set()
     nb_heights = []
-    for nb_h in neighbours:
+    for nb_h in rec.get("neighbours", []):
         nb_rec = all_records.get(nb_h, {})
         sp = nb_rec.get("species_detected")
         if sp:
             nb_species.add(sp)
             nb_heights.append(nb_rec.get("height_m", 0))
 
-    # Context: is this an open site or under existing canopy?
-    own_height = rec.get("height_m", 0)
     avg_nb_height = sum(nb_heights) / max(len(nb_heights), 1)
     under_canopy = avg_nb_height > 8 or own_height > 10
-    is_corridor = corridor_strength > 0.3
-    is_empty = rec.get("status") == "lost" or rec.get("species_detected") is None
+    under_mature = avg_nb_height > 15
 
-    # Determine which succession stage is appropriate for this cell
-    # Gotsch principle: open ground → pioneers + N-fixers
-    #                   under young canopy → secondary
-    #                   under mature canopy → climax
+    # ── Classify site type from terrain ──
+    is_steep = slope > 15
+    is_wet = twi > 4.5
+    is_dry = twi < 1.5
+    is_shaded = solar < 700  # north-facing or valley floor
+    is_sunny = solar > 950
+
+    # ── Determine succession target ──
     if is_empty and not under_canopy:
-        target_succession = "pioneer"
-    elif under_canopy and avg_nb_height > 15:
-        target_succession = "climax"
+        target_succ = "pioneer"
+    elif under_mature:
+        target_succ = "climax"
     elif under_canopy:
-        target_succession = "secondary"
+        target_succ = "secondary"
     else:
-        target_succession = "pioneer"
+        target_succ = "pioneer"
 
-    # Corridors always get pioneers — they're the connection tissue
     if is_corridor and is_empty:
-        target_succession = "pioneer"
+        target_succ = "pioneer"
 
+    # ── Score each candidate species ──
     scores = {}
     for sp_id, sp in species_db.items():
-        if sp.get("stratum") == "ground":
-            continue
+        stratum = sp.get("stratum", "canopy")
+        if stratum == "ground" and not under_mature:
+            continue  # ground layer only under established canopy
 
         score = 0.0
 
-        # Succession match (strongest signal)
-        if sp.get("succession") == target_succession:
-            score += 0.35
-        elif target_succession == "pioneer" and sp.get("succession") != "pioneer":
-            score -= 0.3  # penalize non-pioneers in open ground
+        # 1. SUCCESSION MATCH (0.30)
+        sp_succ = sp.get("succession", "secondary")
+        if sp_succ == target_succ:
+            score += 0.30
+        elif target_succ == "pioneer" and sp_succ != "pioneer":
+            score -= 0.25
 
-        # N-fixers get strong bonus in early succession (Simard 2012)
+        # 2. TERRAIN SUITABILITY (0.25)
+        shade_tol = sp.get("shade_tolerance", 0.5)
+        drought_tol = sp.get("drought_tolerance", 0.5)
+
+        # Steep slopes: hedgerow/stabilization species
+        if is_steep:
+            if stratum in ("shrub",) and drought_tol > 0.4:
+                score += 0.15  # hawthorn, blackthorn, hazel for slope binding
+            if sp.get("growth_rate", 0) > 0.1:
+                score += 0.05  # fast root establishment
+            if stratum == "emergent":
+                score -= 0.10  # tall trees on steep slopes = windthrow risk
+
+        # Wet areas: riparian species
+        if is_wet:
+            if drought_tol < 0.3:
+                score += 0.15  # alder, willow, goat willow thrive in wet
+            if sp.get("nitrogen_role") == "fixer":
+                score += 0.10  # alder in riparian = N-fixation + bank stability
+            if drought_tol > 0.7:
+                score -= 0.15  # scots pine, cork oak don't belong in wet
+
+        # Dry areas: drought-resilient species
+        if is_dry:
+            score += drought_tol * 0.20  # strong drought tolerance signal
+            if drought_tol < 0.3:
+                score -= 0.15  # willow, alder, beech struggle on dry sites
+
+        # North-facing / shaded: shade-tolerant climax
+        if is_shaded:
+            score += shade_tol * 0.15  # beech, yew, holly, western hemlock
+            if shade_tol < 0.2:
+                score -= 0.10  # scots pine, birch need sun
+
+        # South-facing / sunny: timber trees, fruit
+        if is_sunny:
+            if stratum in ("canopy", "emergent"):
+                score += 0.08  # good timber growing conditions
+            if shade_tol > 0.7:
+                score -= 0.05  # shade lovers waste the sun
+
+        # 3. TIMBER OBJECTIVE (0.15)
+        # Hooke Park mandate: high quality timber
+        if sp_id in ("pedunculate_oak", "sessile_oak"):
+            score += 0.15  # 80-120yr premium hardwood
+            if is_sunny and not is_steep:
+                score += 0.05  # best sites for oak
+        elif sp_id == "douglas_fir":
+            score += 0.12  # 50yr construction timber, tallest tree
+            if is_sunny:
+                score += 0.05
+        elif sp_id == "sweet_chestnut":
+            score += 0.10  # 25yr coppice cycle, versatile
+            if is_dry:
+                score += 0.05  # drought tolerant
+        elif sp_id in ("scots_pine", "birch"):
+            score += 0.05  # construction/craft timber
+
+        # 4. N-FIXER NURSE CROPS (0.15)
+        # Science: Simard ECM — alder/birch nurse rings around oak
         if sp.get("nitrogen_role") == "fixer":
             if not under_canopy:
-                score += 0.25  # critical for soil preparation
-            else:
-                score += 0.05
+                score += 0.20  # critical for soil prep
+            # Extra bonus if neighbours are heavy feeders (oak, ash)
+            for nb_sp in nb_species:
+                nb_data = species_db.get(nb_sp, {})
+                if nb_data.get("nitrogen_role") == "heavy_feeder":
+                    score += 0.10  # alder next to oak = perfect
 
-        # Guild compatibility
+        # 5. GUILD COMPATIBILITY (0.10)
         for nb_sp in nb_species:
-            score += guild_scorer(sp_id, nb_sp) * 0.2
+            score += guild_scorer(sp_id, nb_sp) * 0.15
 
-        # Site suitability
-        twi = rec.get("twi") or 8
-        if twi < 6:
-            score += sp.get("drought_tolerance", 0.5) * 0.15
-        if under_canopy:
-            score += sp.get("shade_tolerance", 0.5) * 0.2
+        # 6. CLIMATE RESILIENCE 2050 (0.05)
+        # Dorset 2050: +2-3C, -15% summer rain
+        if drought_tol > 0.5:
+            score += 0.04  # future-proofing
+        if sp_id in ("cork_oak", "monterey_cypress", "sweet_chestnut"):
+            score += 0.03  # Mediterranean species becoming viable
 
-        # Corridor connectivity: fast-growing species for rapid canopy closure
+        # 7. BIODIVERSITY BONUS
+        # Rare strata get priority to fill all layers
+        if stratum in ("understory", "shrub") and not under_canopy:
+            score += 0.03  # structural diversity
+        if stratum == "ground" and under_mature:
+            score += 0.05  # bluebell, wild garlic under climax canopy
+
+        # 8. CORRIDOR CONNECTIVITY
         if is_corridor:
-            score += sp.get("growth_rate", 0.05) * 2.0
+            score += sp.get("growth_rate", 0.05) * 1.5  # fast growers for corridors
 
         scores[sp_id] = score
 
     if not scores:
-        return "common_alder"  # N-fixer default
+        return "common_alder"
 
     return max(scores, key=scores.get)
 
