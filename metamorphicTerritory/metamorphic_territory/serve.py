@@ -377,8 +377,7 @@ def _try_tippecanoe() -> bool:
 
     base_args = [
         "-z", "18", "-Z", "8",
-        "--drop-densest-as-needed",
-        "--extend-zooms-if-still-dropping",
+        "--no-feature-limit",
         "--no-tile-size-limit",
         "-l", "planting",
         "--force",
@@ -616,6 +615,167 @@ async def perpetual_status():
         "clients": len(_ws_clients),
         "cells": len(_perpetual_gol.grid) if _perpetual_gol else 0,
     }
+
+
+
+@app.get("/report")
+async def planting_report():
+    """Generate an HTML planting schedule report from checkpoint data.
+
+    Shows every hex, every species, organized by phase/year.
+    Open in browser and print to PDF.
+    """
+    import h3 as h3lib
+    from collections import Counter
+
+    checkpoint_dir = DATA_DIR / "checkpoints"
+    if not checkpoint_dir.exists():
+        raise HTTPException(404, "No checkpoints — run /simulate first")
+
+    # Load key checkpoints for the planting phases
+    phases = [0, 1, 3, 5, 7, 10, 15, 20]
+    phase_data = {}
+    for yr in phases:
+        cp = checkpoint_dir / f"year_{yr:03d}.json"
+        if cp.exists():
+            with open(cp) as f:
+                phase_data[yr] = json.load(f)
+
+    if not phase_data:
+        raise HTTPException(404, "No checkpoint files found")
+
+    # Compute phase diffs
+    html_sections = []
+    prev_state = {}
+    total_planted = 0
+    species_totals = Counter()
+
+    for yr in sorted(phase_data.keys()):
+        state = phase_data[yr]
+        new_plantings = {}
+        deaths = {}
+        species_changes = {}
+
+        for h3_id, cell in state.items():
+            prev = prev_state.get(h3_id, {})
+            prev_sp = prev.get("s")
+            curr_sp = cell.get("s")
+
+            if curr_sp and not prev_sp:
+                new_plantings[h3_id] = cell
+            elif prev_sp and not curr_sp:
+                deaths[h3_id] = prev
+            elif curr_sp and prev_sp and curr_sp != prev_sp:
+                species_changes[h3_id] = {"from": prev_sp, "to": curr_sp, "cell": cell}
+
+        # Species counts at this year
+        alive = {h: c for h, c in state.items() if c.get("s")}
+        species_counts = Counter(c["s"] for c in alive.values())
+        strata_counts = Counter(c.get("st", "unknown") for c in alive.values())
+
+        # Build HTML for this phase
+        section = f"""
+        <div class="phase" style="page-break-before: always;">
+            <h2>Year {yr}</h2>
+            <div class="stats">
+                <div class="stat"><span class="n">{len(alive):,}</span><span class="label">alive</span></div>
+                <div class="stat"><span class="n">{len(new_plantings):,}</span><span class="label">new plantings</span></div>
+                <div class="stat"><span class="n">{len(deaths):,}</span><span class="label">deaths</span></div>
+                <div class="stat"><span class="n">{len(species_changes):,}</span><span class="label">species changes</span></div>
+                <div class="stat"><span class="n">{len(species_counts)}</span><span class="label">species</span></div>
+            </div>
+
+            <h3>Species Distribution</h3>
+            <table>
+                <tr><th>Species</th><th>Count</th><th>%</th><th>Stratum</th></tr>
+        """
+        for sp, count in species_counts.most_common():
+            pct = count / max(len(alive), 1) * 100
+            # Find stratum for this species
+            st = ""
+            for c in alive.values():
+                if c.get("s") == sp:
+                    st = c.get("st", "")
+                    break
+            section += f'<tr><td>{sp}</td><td>{count:,}</td><td>{pct:.1f}%</td><td>{st}</td></tr>'
+        section += "</table>"
+
+        # Stratum breakdown
+        section += "<h3>Stratum Layers</h3><table><tr><th>Stratum</th><th>Count</th><th>%</th></tr>"
+        for st, count in strata_counts.most_common():
+            pct = count / max(len(alive), 1) * 100
+            section += f'<tr><td>{st}</td><td>{count:,}</td><td>{pct:.1f}%</td></tr>'
+        section += "</table>"
+
+        # New plantings detail (first 50)
+        if new_plantings:
+            section += f"<h3>New Plantings ({len(new_plantings):,} hexes)</h3>"
+            section += "<table><tr><th>H3 Index</th><th>Species</th><th>Stratum</th><th>Height</th><th>Health</th></tr>"
+            for h3_id, cell in list(new_plantings.items())[:50]:
+                section += f'<tr><td class="mono">{h3_id[:16]}...</td><td>{cell.get("s","")}</td><td>{cell.get("st","")}</td><td>{cell.get("h",0)}m</td><td>{cell.get("hp",0):.2f}</td></tr>'
+            if len(new_plantings) > 50:
+                section += f'<tr><td colspan="5">... and {len(new_plantings)-50:,} more</td></tr>'
+            section += "</table>"
+
+        # Deaths detail (first 20)
+        if deaths:
+            section += f"<h3>Deaths ({len(deaths):,} hexes)</h3>"
+            section += "<table><tr><th>H3 Index</th><th>Species Lost</th></tr>"
+            for h3_id, cell in list(deaths.items())[:20]:
+                section += f'<tr><td class="mono">{h3_id[:16]}...</td><td>{cell.get("s","")}</td></tr>'
+            if len(deaths) > 20:
+                section += f'<tr><td colspan="2">... and {len(deaths)-20:,} more</td></tr>'
+            section += "</table>"
+
+        section += "</div>"
+        html_sections.append(section)
+        prev_state = state
+        total_planted += len(new_plantings)
+        species_totals.update(species_counts)
+
+    # Assemble full HTML
+    html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Hooke Park — Metamorphic Planting Scheme</title>
+<style>
+  body {{ font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; color: #1a1a1a; }}
+  h1 {{ font-size: 28px; border-bottom: 3px solid #1a1a1a; padding-bottom: 8px; }}
+  h2 {{ font-size: 22px; color: #2d5016; margin-top: 40px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }}
+  h3 {{ font-size: 16px; color: #555; margin-top: 20px; }}
+  .summary {{ background: #f5f5f0; padding: 20px; border-radius: 8px; margin: 20px 0; }}
+  .stats {{ display: flex; gap: 20px; flex-wrap: wrap; margin: 15px 0; }}
+  .stat {{ text-align: center; padding: 10px 15px; background: white; border-radius: 6px; border: 1px solid #e0e0d8; }}
+  .stat .n {{ display: block; font-size: 24px; font-weight: 700; color: #2d5016; }}
+  .stat .label {{ font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }}
+  th {{ background: #f0f0e8; padding: 6px 10px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }}
+  td {{ padding: 5px 10px; border-bottom: 1px solid #eee; }}
+  tr:hover {{ background: #fafaf5; }}
+  .mono {{ font-family: 'SF Mono', monospace; font-size: 11px; color: #666; }}
+  .phase {{ margin-bottom: 40px; }}
+  @media print {{ .phase {{ page-break-before: always; }} body {{ font-size: 11px; }} }}
+</style>
+</head><body>
+<h1>Hooke Park — Metamorphic Forest Planting Scheme</h1>
+<div class="summary">
+  <div class="stats">
+    <div class="stat"><span class="n">{len(phase_data)}</span><span class="label">phases</span></div>
+    <div class="stat"><span class="n">{total_planted:,}</span><span class="label">total plantings</span></div>
+    <div class="stat"><span class="n">{len(species_totals)}</span><span class="label">species used</span></div>
+    <div class="stat"><span class="n">{len(prev_state):,}</span><span class="label">total hexagons</span></div>
+  </div>
+  <p style="font-size:13px; color:#666;">
+    Generated from {len(phase_data)} simulation checkpoints (years {", ".join(str(y) for y in sorted(phase_data.keys()))}).
+    Each hexagon is an H3 res-13 cell (~1.2m). The metamorphic engine (GoL + physarum corridors)
+    assigns species based on terrain, guild compatibility, and succession dynamics.
+  </p>
+</div>
+{"".join(html_sections)}
+</body></html>"""
+
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(html)
 
 
 def main():
